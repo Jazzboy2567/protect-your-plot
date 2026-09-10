@@ -56,6 +56,10 @@ var top_label: Label
 var panel: Control
 var rally_btn: Button
 var banner: Label
+var ctrl_speed: Button
+var ctrl_full: Button
+var _speed_i: int = 0
+const SPEEDS := [1.0, 2.0, 3.0]
 
 var _drag_unit = null
 var _drag_moved: bool = false
@@ -87,10 +91,36 @@ func _ready() -> void:
 	banner.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud.add_child(banner)
 
+	# Persistent top-right controls (survive panel rebuilds).
+	ctrl_speed = Button.new()
+	ctrl_speed.text = "Speed x1"
+	ctrl_speed.position = Vector2(ARENA.x - 250, 10)
+	ctrl_speed.size = Vector2(110, 30)
+	ctrl_speed.pressed.connect(_cycle_speed)
+	hud.add_child(ctrl_speed)
+
+	ctrl_full = Button.new()
+	ctrl_full.text = "Fullscreen"
+	ctrl_full.position = Vector2(ARENA.x - 132, 10)
+	ctrl_full.size = Vector2(122, 30)
+	ctrl_full.pressed.connect(_toggle_fullscreen)
+	hud.add_child(ctrl_full)
+
 	show_shop()
 
 func is_fighting() -> bool:
 	return phase == Phase.BATTLE
+
+func _cycle_speed() -> void:
+	_speed_i = (_speed_i + 1) % SPEEDS.size()
+	Engine.time_scale = SPEEDS[_speed_i]
+	ctrl_speed.text = "Speed x%d" % int(SPEEDS[_speed_i])
+
+func _toggle_fullscreen() -> void:
+	if DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_MAXIMIZED)
+	else:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
 
 # ---------------------------------------------------------------- flow
 
@@ -329,6 +359,9 @@ func on_unit_died(u: Unit) -> void:
 # ---------------------------------------------------------------- input (deploy)
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and event.keycode == KEY_F11:
+		_toggle_fullscreen()
+		return
 	if phase != Phase.DEPLOY:
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
