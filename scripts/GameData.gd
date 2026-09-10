@@ -24,6 +24,7 @@ const UNITS := {
 	"palisade":   {"id":"palisade","name":"Palisade","hp":380,"damage":0,"range":0,"cooldown":1.0,"speed":0,"radius":15,"cost":45,"structure":true,"color":Color(0.46,0.33,0.19)},
 	"stone_wall": {"id":"stone_wall","name":"Stone Wall","hp":600,"damage":0,"range":0,"cooldown":1.0,"speed":0,"radius":16,"cost":70,"structure":true,"color":Color(0.55,0.55,0.58)},
 	"church":     {"id":"church","name":"Church","hp":300,"damage":0,"range":0,"cooldown":1.0,"speed":0,"radius":18,"cost":60,"structure":true,"color":Color(0.86,0.82,0.66)},
+	"castle":     {"id":"castle","name":"Castle Keep","hp":900,"damage":0,"range":0,"cooldown":1.0,"speed":0,"radius":66,"cost":0,"structure":true,"color":Color(0.62,0.62,0.68)},
 
 	# --- Enemies (right side) — reddish ---
 	"sheep":       {"id":"sheep","name":"Sheep","hp":18,"damage":2,"range":6,"cooldown":1.2,"speed":45,"radius":8,"drop":3,"beast":true,"color":Color(0.90,0.90,0.90)},

@@ -18,6 +18,14 @@ const SPECIALIST_IDS := ["archer", "woodcutter", "hunter", "herbalist", "fisherm
 const BUILDING_IDS := ["barricade", "spikes", "palisade", "stone_wall", "church"]
 const RECRUIT_CAP := 3
 
+# Tile grid over your (left) side. Buildings snap to tiles; the castle is 4x4.
+const TILE := 36.0
+const GRID_COLS := 10
+const GRID_ROWS := 18
+const CASTLE_GX := 0
+const CASTLE_GY := 7
+const CASTLE_SPAN := 4
+
 # Run-wide passive upgrades (buy once, from the Traveling Merchant every 4th battle).
 const RELIC_DEFS := {
 	"sharp_tools":      {"name": "Sharpened Tools (+25% dmg)", "cost": 60},
@@ -60,6 +68,8 @@ var consumables: Dictionary = {}
 var peasant_recruits: int = RECRUIT_CAP
 var specialist_recruits: int = RECRUIT_CAP
 var dead_this_battle: Array = []
+var buildings: Array = []          # persistent placed buildings: {id, gx, gy}
+var _build_sel: String = ""        # building id selected for placement ("" = command mode)
 
 var peasants: Array = []
 var enemies: Array = []
@@ -121,6 +131,7 @@ func _ready() -> void:
 	ctrl_full.pressed.connect(_toggle_fullscreen)
 	hud.add_child(ctrl_full)
 
+	buildings = [{"id": "castle", "gx": CASTLE_GX, "gy": CASTLE_GY}]
 	show_shop()
 
 func is_fighting() -> bool:
@@ -157,7 +168,9 @@ func show_shop() -> void:
 
 func start_deploy() -> void:
 	phase = Phase.DEPLOY
+	_build_sel = ""
 	_despawn_all()
+	_spawn_buildings()
 	_spawn_peasants()
 	_spawn_enemies()
 	_build_deploy_ui()
@@ -186,7 +199,7 @@ func _win_battle() -> void:
 	army = new_army
 
 	# A surviving Church revives one fallen unit for the next battle.
-	if "church" in army and not dead_this_battle.is_empty():
+	if _has_building("church") and not dead_this_battle.is_empty():
 		var revived: String = dead_this_battle[0]
 		army.append(revived)
 		info_text += "  The church revives a %s." % GameData.UNITS[revived]["name"]
@@ -234,24 +247,23 @@ func _restart() -> void:
 	peasant_recruits = RECRUIT_CAP
 	specialist_recruits = RECRUIT_CAP
 	dead_this_battle = []
+	buildings = [{"id": "castle", "gx": CASTLE_GX, "gy": CASTLE_GY}]
+	_build_sel = ""
 	info_text = ""
 	show_shop()
 
 # ---------------------------------------------------------------- spawning
 
 func _spawn_peasants() -> void:
-	var struct_i := 0
 	var fight_i := 0
 	for id in army:
+		if GameData.UNITS[id].get("structure", false):
+			continue   # structures are placed on tiles, not spawned from the roster
 		var u := _make_unit(id, 0)
-		if u.is_structure:
-			u.position = Vector2(330, 150 + struct_i * 70 + randf_range(-6, 6))
-			struct_i += 1
-		else:
-			var col := fight_i / 8
-			var row := fight_i % 8
-			u.position = Vector2(120 + col * 36 + randf_range(-6, 6), 130 + row * 52 + randf_range(-8, 8))
-			fight_i += 1
+		var col := fight_i / 8
+		var row := fight_i % 8
+		u.position = Vector2(150 + col * 36 + randf_range(-6, 6), 130 + row * 52 + randf_range(-8, 8))
+		fight_i += 1
 		u.command_point = u.position
 		_apply_relics(u)
 		world.add_child(u)
@@ -329,6 +341,82 @@ func _make_unit(id: String, team: int) -> Unit:
 	u.setup(GameData.UNITS[id], team, self)
 	return u
 
+func _spawn_buildings() -> void:
+	for b in buildings:
+		var u := _make_unit(b["id"], 0)
+		u.position = _building_center(b)
+		u.command_point = u.position
+		u.set_meta("bref", b)
+		_apply_relics(u)
+		world.add_child(u)
+		peasants.append(u)
+
+func _building_center(b: Dictionary) -> Vector2:
+	if b["id"] == "castle":
+		return Vector2((b["gx"] + CASTLE_SPAN / 2.0) * TILE, (b["gy"] + CASTLE_SPAN / 2.0) * TILE)
+	return Vector2((b["gx"] + 0.5) * TILE, (b["gy"] + 0.5) * TILE)
+
+func _tile_occupied(gx: int, gy: int) -> bool:
+	for b in buildings:
+		if b["id"] == "castle":
+			if gx >= b["gx"] and gx < b["gx"] + CASTLE_SPAN and gy >= b["gy"] and gy < b["gy"] + CASTLE_SPAN:
+				return true
+		elif b["gx"] == gx and b["gy"] == gy:
+			return true
+	return false
+
+func _has_building(id: String) -> bool:
+	for b in buildings:
+		if b["id"] == id:
+			return true
+	return false
+
+func _place_building(pos: Vector2) -> void:
+	var gx := int(pos.x / TILE)
+	var gy := int(pos.y / TILE)
+	if gx < 0 or gx >= GRID_COLS or gy < 0 or gy >= GRID_ROWS:
+		info_text = "Build on your own tiles (left side)."
+		_update_top()
+		return
+	if _tile_occupied(gx, gy):
+		info_text = "That tile is occupied."
+		_update_top()
+		return
+	var cost: int = GameData.UNITS[_build_sel]["cost"]
+	if gold < cost:
+		info_text = "Not enough gold for that building."
+		_update_top()
+		return
+	gold -= cost
+	var b := {"id": _build_sel, "gx": gx, "gy": gy}
+	buildings.append(b)
+	var u := _make_unit(_build_sel, 0)
+	u.position = _building_center(b)
+	u.command_point = u.position
+	u.set_meta("bref", b)
+	_apply_relics(u)
+	world.add_child(u)
+	peasants.append(u)
+	_build_deploy_ui()
+	_update_top()
+	queue_redraw()
+
+# Nearest wall directly in an advancing enemy's path (so a wall line blocks it).
+func structure_ahead(u: Unit):
+	var best = null
+	var best_d := 56.0
+	for p in peasants:
+		if not is_instance_valid(p) or not p.is_structure or p.hp <= 0.0:
+			continue
+		var dx: float = u.global_position.x - p.global_position.x   # >0: wall is to the left (ahead)
+		var dy: float = absf(u.global_position.y - p.global_position.y)
+		if dx > -8.0 and dy < p.radius + 12.0:
+			var d: float = u.global_position.distance_to(p.global_position)
+			if d < best_d:
+				best_d = d
+				best = p
+	return best
+
 func _despawn_all() -> void:
 	for c in world.get_children():
 		c.queue_free()
@@ -380,9 +468,14 @@ func on_unit_died(u: Unit) -> void:
 		gold += u.gold_drop
 	elif u.team == 0 and phase == Phase.BATTLE and not u.is_structure:
 		dead_this_battle.append(u.type_id)
+	if u.team == 0 and u.is_structure and u.has_meta("bref"):
+		buildings.erase(u.get_meta("bref"))   # destroyed buildings don't persist
 	peasants.erase(u)
 	enemies.erase(u)
 	if phase != Phase.BATTLE:
+		return
+	if u.type_id == "castle":
+		_lose_battle()   # the keep has fallen
 		return
 	if enemies.is_empty():
 		_win_battle()
@@ -418,6 +511,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			queue_redraw()
 
 func _handle_click(pos: Vector2) -> void:
+	if _build_sel != "" and phase == Phase.DEPLOY:
+		_place_building(pos)
+		return
 	var u = _peasant_at(pos)
 	if u != null:
 		_clear_selection()
@@ -508,17 +604,9 @@ func _build_shop_ui() -> void:
 	y += 10
 	_mk_button("Deploy for Battle %d  >>" % battle_num, Vector2(x, y), Vector2(232, 38), start_deploy)
 
-	# ---- Middle column: buildings + consumables ----
+	# ---- Middle column: consumables (buildings are placed in the Deploy phase) ----
 	var mx := 288.0
 	var my := 82.0
-	_shop_header("Buildings", mx, my)
-	my += 30
-	for id in BUILDING_IDS:
-		var cost: int = GameData.UNITS[id]["cost"]
-		var b := _mk_button("Build %s — %dg" % [GameData.UNITS[id]["name"], cost], Vector2(mx, my), Vector2(250, 26), func(): _buy(id))
-		b.disabled = gold < cost
-		my += 28
-	my += 8
 	_shop_header("Consumables", mx, my)
 	my += 30
 	for id in CONSUMABLE_DEFS:
@@ -554,12 +642,36 @@ func _shop_header(text: String, x: float, y: float) -> void:
 func _build_deploy_ui() -> void:
 	_clear_panel()
 	var hint := Label.new()
-	hint.text = "DEPLOY  —  drag a box to select units, then click a spot to move them there.\nPosition your line, then Fight. You can keep giving orders during the battle."
+	hint.text = "DEPLOY — Move Units: drag a box to select, click a spot to send them (works mid-battle too).\nOr pick a building and click a tile on your side to place it. Walls block enemies until destroyed."
 	hint.position = Vector2(16, 44)
-	hint.add_theme_font_size_override("font_size", 15)
+	hint.add_theme_font_size_override("font_size", 14)
 	panel.add_child(hint)
-	_mk_button("Fight!  >>", Vector2(16, 96), Vector2(230, 42), begin_fight)
+
+	var bx := 16.0
+	var by := 82.0
+	var mv := _mk_button("Move Units" + (" <" if _build_sel == "" else ""), Vector2(bx, by), Vector2(200, 28), func(): _set_build_sel(""))
+	mv.disabled = _build_sel == ""
+	by += 32
+	for id in BUILDING_IDS:
+		var cost: int = GameData.UNITS[id]["cost"]
+		var mark := " <" if _build_sel == id else ""
+		var b := _mk_button("%s — %dg%s" % [GameData.UNITS[id]["name"], cost, mark], Vector2(bx, by), Vector2(200, 28), func(): _set_build_sel(id))
+		b.disabled = gold < cost
+		by += 30
+	by += 8
+	_mk_button("Fight!  >>", Vector2(bx, by), Vector2(200, 40), begin_fight)
 	_build_roster_label()
+	queue_redraw()
+
+func _set_build_sel(id: String) -> void:
+	_build_sel = id
+	if id != "":
+		_clear_selection()
+		info_text = "Placing %s — click a tile on your side." % GameData.UNITS[id]["name"]
+	else:
+		info_text = "Move mode — drag to select units, click to move them."
+	_build_deploy_ui()
+	_update_top()
 
 func _build_battle_ui() -> void:
 	_clear_panel()
@@ -740,6 +852,8 @@ func _rally() -> void:
 		info_text = "To arms! The peasants surge forward."
 
 func _process(delta: float) -> void:
+	if phase == Phase.DEPLOY:
+		queue_redraw()   # keep the build grid live
 	if rally_time > 0.0:
 		rally_time -= delta
 	if rally_cd > 0.0:
@@ -757,6 +871,13 @@ func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, Vector2(360, ARENA.y)), Color(0.34, 0.40, 0.20))  # your tilled plot
 	draw_line(Vector2(FENCE_X, 0), Vector2(FENCE_X, ARENA.y), Color(0.45, 0.32, 0.18), 4.0) # fence
 	draw_rect(Rect2(Vector2(900, 0), Vector2(252, ARENA.y)), Color(0.28, 0.30, 0.20)) # enemy approach
+	# Build grid over your side during deploy.
+	if phase == Phase.DEPLOY:
+		for gx in GRID_COLS:
+			for gy in GRID_ROWS:
+				var r := Rect2(gx * TILE, gy * TILE, TILE, TILE)
+				draw_rect(r, Color(1, 0.6, 0.2, 0.14) if _tile_occupied(gx, gy) else Color(1, 1, 1, 0.04))
+				draw_rect(r, Color(1, 1, 1, 0.10), false, 1.0)
 	if _dragging:
 		draw_rect(_sel_rect, Color(1, 1, 0.4, 0.12))
 		draw_rect(_sel_rect, Color(1, 1, 0.4, 0.7), false, 1.5)

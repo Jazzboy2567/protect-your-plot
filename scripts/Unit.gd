@@ -122,6 +122,12 @@ func _physics_process(delta: float) -> void:
 		if target == null:
 			target = main.get_nearest_enemy(self)
 
+	# A wall directly ahead must be broken through first.
+	if team == 1:
+		var wall = main.structure_ahead(self)
+		if wall != null:
+			target = wall
+
 	# Single ally pass: light separation + collect nearby aura effects.
 	var sep := Vector2.ZERO
 	var haste := 0.0
