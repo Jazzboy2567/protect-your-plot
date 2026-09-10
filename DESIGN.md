@@ -106,17 +106,29 @@ Fortifier, Blacksmith's Forge, Rat Catcher's Charm, Peasant Uprising, Conscripti
 
 ---
 
-## MVP build order (what's in this repo now)
+## Implemented (what's in this repo now)
 
-1. ✅ One battle: stick-figure auto-combat, targeting, attack, HP, death.
-2. ✅ Stances (Aggressive / Hold) toggled globally.
-3. ✅ Barricade structure to fight behind.
-4. ✅ Gold + shop (hire Farmer/Militia/Archer/Woodcutter, build Barricade).
-5. ✅ Loop of escalating battles + a boss every 4th, win/lose/restart.
-6. ✅ Landowner "Rally!" power.
+- ✅ Stick-figure auto-combat: targeting, attack, HP bars, death fade, hit-flash,
+  floating damage numbers, victory/boss banners.
+- ✅ **Command system:** a DEPLOY phase where you drag peasants into position and
+  click them to set stance. Four stances — Aggressive, Hold, Defend, Follow — with
+  colour-coded markers. Enemies stay frozen until you press Fight.
+- ✅ **Economy:** gold from enemy loot drops + tax income (scales with survivors).
+  Shop each round to recruit; **Traveling Merchant every 4th battle** sells relics.
+- ✅ **Units:** Farmer, Militia, Archer, Woodcutter (pierce), Hunter (anti-beast),
+  Herbalist (cleanse), Fisherman (slow), Torchbearer (burn), Baker (heal aura),
+  Monk (haste aura), Plague Doctor. Structures: Barricade, Spikes, Palisade, Stone Wall.
+- ✅ **Enemies + behaviours:** Sheep, Plague Rat (infects), Bandit, Ram (knockback),
+  Wolf (dives backline), Boar, Crossbowman (ranged), Knight (armored), Bear,
+  Plague-Risen. Bosses: The Black Death (4, 12) and The Baron (8).
+- ✅ **Status effects:** plague (spreads peasant-to-peasant, cured by Herbalist),
+  burn, slow; armor + armor-piercing; beast damage bonus; knockback.
+- ✅ **Items:** run-wide **relics** (damage/armor/atk-speed/immunity/etc.) and
+  in-battle **consumables** (Firepot, Holy Water, Rally Horn, Bag of Grain, Plague Cure).
+- ✅ **Landowner "Rally!" power** (temporary army-wide damage surge).
 
-**Layer two (next):** tax-rate slider, plot upgrades, more classes/enemies/items,
-per-unit stances (Defend/Follow), synergies (auras), then AdMob + Play export.
+**Next (not yet built):** balance tuning across 12 battles, tax-rate slider,
+permanent plot upgrades, more content/synergies, sound, then AdMob + Android export.
 
 ## Project layout
 
