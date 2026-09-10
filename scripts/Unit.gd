@@ -4,9 +4,7 @@ extends Node2D
 # One combatant (peasant, enemy, or structure). Drawn as a stick figure in _draw().
 # Behaviour: find nearest enemy -> move into range (unless Hold) -> attack on cooldown.
 
-enum Stance { AGGRESSIVE, HOLD, DEFEND, FOLLOW }
-
-const STANCE_COLORS := [Color(1, 0.45, 0.3), Color(0.45, 0.6, 1), Color(0.3, 0.9, 0.9), Color(1, 0.9, 0.3)]
+const ENGAGE_RADIUS := 120.0          # how far a unit chases from its command point
 
 var main = null                       # reference to Main (owns the unit arrays)
 var team: int = 0                     # 0 = peasant, 1 = enemy
@@ -20,7 +18,6 @@ var attack_cooldown: float = 1.0
 var move_speed: float = 55.0
 var radius: float = 7.0
 var is_structure: bool = false
-var stance: int = Stance.AGGRESSIVE
 var body_color: Color = Color(0.78, 0.80, 0.85)
 var gold_drop: int = 0
 var armor: float = 0.0                 # flat damage reduction (min 1 damage taken)
@@ -44,8 +41,8 @@ var burn_dps: float = 0.0
 var slow_time: float = 0.0
 var _spread_cd: float = 0.0
 
-var home_pos: Vector2 = Vector2.ZERO   # anchor for Hold/Defend, drop point from deploy
-var leader = null                      # follow target for FOLLOW stance
+var command_point: Vector2 = Vector2.ZERO   # where you've ordered this unit to hold
+var selected: bool = false
 var target = null
 var _cd: float = 0.0
 var _flash: float = 0.0
@@ -175,7 +172,7 @@ func _physics_process(delta: float) -> void:
 			if kl > 0.001:
 				target.global_position += kb / kl * knockback
 
-	# Move toward the goal dictated by stance (enemies always behave AGGRESSIVE).
+	# Move toward the goal (hold the command point; enemies advance).
 	var goal = _movement_goal(has_t, dist, reach)
 	if goal != null:
 		var dir: Vector2 = goal - global_position
@@ -185,27 +182,17 @@ func _physics_process(delta: float) -> void:
 			global_position += dir / dl2 * spd * delta
 
 func _movement_goal(has_t: bool, dist: float, reach: float):
-	if team == 1 or stance == Stance.AGGRESSIVE:
+	# Enemies always advance on the nearest target.
+	if team == 1:
 		return target.global_position if (has_t and dist > reach) else null
-	if stance == Stance.HOLD:
-		if (not has_t or dist > reach) and global_position.distance_to(home_pos) > 6.0:
-			return home_pos
-		return null
-	if stance == Stance.DEFEND:
-		if has_t and dist > reach and target.global_position.distance_to(home_pos) <= 130.0:
-			return target.global_position
-		if global_position.distance_to(home_pos) > 6.0:
-			return home_pos
-		return null
-	# FOLLOW
+	# Your units hold their command point and engage foes that come near it.
 	if has_t and dist <= reach:
 		return null
-	if leader == null or not is_instance_valid(leader) or leader._dead:
-		leader = main.get_follow_leader(self)
-	if leader != null:
-		var lp: Vector2 = leader.global_position + Vector2(-26, 0)
-		return lp if global_position.distance_to(lp) > 10.0 else null
-	return target.global_position if (has_t and dist > reach) else null
+	if has_t and dist > reach and target.global_position.distance_to(command_point) <= ENGAGE_RADIUS:
+		return target.global_position
+	if global_position.distance_to(command_point) > 8.0:
+		return command_point
+	return null
 
 func take_damage(amount: float, pierce_flag: bool = false) -> void:
 	if _dead:
@@ -274,6 +261,6 @@ func _draw() -> void:
 	draw_line(Vector2(0, radius * 0.6), Vector2(-radius * 0.4, radius), c, 2.0)  # left leg
 	draw_line(Vector2(0, radius * 0.6), Vector2(radius * 0.4, radius), c, 2.0)   # right leg
 
-	# Stance marker above your own units (colour-coded).
-	if team == 0:
-		draw_circle(Vector2(0, -radius - 14.0), 2.8, STANCE_COLORS[stance])
+	# Selection ring when this unit is currently selected.
+	if selected:
+		draw_arc(Vector2.ZERO, radius + 4.0, 0.0, TAU, 20, Color(1, 1, 0.4, 0.9), 1.6)

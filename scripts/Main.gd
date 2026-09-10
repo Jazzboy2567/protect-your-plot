@@ -1,7 +1,7 @@
 extends Node2D
 
 # Game flow, economy, shop/deploy/battle UI, spawning, and the win/lose loop.
-# You are the landowner: hire with gold, deploy peasants (position + stance),
+# You are the landowner: hire with gold, deploy peasants (box-select + move),
 # then watch them auto-battle the incoming wave.
 
 enum Phase { SHOP, DEPLOY, BATTLE, GAMEOVER, WIN }
@@ -37,7 +37,6 @@ const STRUCT_ITEMS := ["barricade", "spikes", "palisade", "stone_wall"]
 var gold: int = START_GOLD
 var battle_num: int = 1
 var army: Array = START_ARMY.duplicate()
-var peasant_stance: int = Unit.Stance.AGGRESSIVE
 var phase: int = Phase.SHOP
 var info_text: String = ""
 
@@ -61,9 +60,10 @@ var ctrl_full: Button
 var _speed_i: int = 0
 const SPEEDS := [1.0, 2.0, 3.0]
 
-var _drag_unit = null
-var _drag_moved: bool = false
+# RTS selection state
 var _press_pos: Vector2 = Vector2.ZERO
+var _dragging: bool = false
+var _sel_rect: Rect2 = Rect2()
 
 func _ready() -> void:
 	world = Node2D.new()
@@ -201,7 +201,6 @@ func _restart() -> void:
 	gold = START_GOLD
 	battle_num = 1
 	army = START_ARMY.duplicate()
-	peasant_stance = Unit.Stance.AGGRESSIVE
 	rally_cd = 0.0
 	rally_time = 0.0
 	relics = []
@@ -224,8 +223,7 @@ func _spawn_peasants() -> void:
 			var row := fight_i % 8
 			u.position = Vector2(120 + col * 36 + randf_range(-6, 6), 130 + row * 52 + randf_range(-8, 8))
 			fight_i += 1
-		u.stance = peasant_stance
-		u.home_pos = u.position
+		u.command_point = u.position
 		_apply_relics(u)
 		world.add_child(u)
 		peasants.append(u)
@@ -235,8 +233,7 @@ func _spawn_peasants() -> void:
 		for k in 2:
 			var f := _make_unit("farmer", 0)
 			f.position = Vector2(90 + randf_range(-6, 6), 220 + k * 50 + fight_i * 4)
-			f.stance = peasant_stance
-			f.home_pos = f.position
+			f.command_point = f.position
 			_apply_relics(f)
 			world.add_child(f)
 			peasants.append(f)
@@ -276,7 +273,7 @@ func _spawn_enemies() -> void:
 		var col := i / 10
 		var row := i % 10
 		u.position = Vector2(1040 - col * 36 + randf_range(-6, 6), 110 + row * 46 + randf_range(-8, 8))
-		u.home_pos = u.position
+		u.command_point = u.position
 		world.add_child(u)
 		enemies.append(u)
 		i += 1
@@ -309,18 +306,6 @@ func get_nearest_enemy(u: Unit):
 
 func get_allies(u: Unit) -> Array:
 	return peasants if u.team == 0 else enemies
-
-func get_follow_leader(u: Unit):
-	var best = null
-	var best_d := INF
-	for p in peasants:
-		if p == u or not is_instance_valid(p) or p.hp <= 0.0 or p.is_structure or p.stance == Unit.Stance.FOLLOW:
-			continue
-		var d: float = u.global_position.distance_squared_to(p.global_position)
-		if d < best_d:
-			best_d = d
-			best = p
-	return best
 
 func get_backline_peasant():
 	var best = null
@@ -356,31 +341,87 @@ func on_unit_died(u: Unit) -> void:
 	elif peasants.is_empty():
 		_lose_battle()
 
-# ---------------------------------------------------------------- input (deploy)
+# ------------------------------------------------ RTS selection & commands
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and event.keycode == KEY_F11:
 		_toggle_fullscreen()
 		return
-	if phase != Phase.DEPLOY:
+	if phase != Phase.DEPLOY and phase != Phase.BATTLE:
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
-			_drag_unit = _peasant_at(event.position)
-			_drag_moved = false
 			_press_pos = event.position
+			_dragging = false
 		else:
-			if _drag_unit != null and not _drag_moved:
-				_cycle_unit_stance(_drag_unit)
-			_drag_unit = null
-	elif event is InputEventMouseMotion and _drag_unit != null:
-		if event.position.distance_to(_press_pos) > 6.0:
-			_drag_moved = true
-		var p: Vector2 = event.position
-		p.x = clampf(p.x, 28.0, FENCE_X - 12.0)
-		p.y = clampf(p.y, 28.0, ARENA.y - 20.0)
-		_drag_unit.global_position = p
-		_drag_unit.home_pos = p
+			if _dragging:
+				_select_in_rect(Rect2(_press_pos, event.position - _press_pos).abs())
+				_dragging = false
+				queue_redraw()
+			else:
+				_handle_click(event.position)
+	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
+		_command_selected_to(event.position)   # right-click also moves (desktop)
+	elif event is InputEventMouseMotion and (event.button_mask & MOUSE_BUTTON_MASK_LEFT):
+		if event.position.distance_to(_press_pos) > 8.0:
+			_dragging = true
+		if _dragging:
+			_sel_rect = Rect2(_press_pos, event.position - _press_pos).abs()
+			queue_redraw()
+
+func _handle_click(pos: Vector2) -> void:
+	var u = _peasant_at(pos)
+	if u != null:
+		_clear_selection()
+		u.selected = true
+		u.queue_redraw()
+	elif _has_selection():
+		_command_selected_to(pos)
+	else:
+		_clear_selection()
+
+func _command_selected_to(pos: Vector2) -> void:
+	var sel: Array = []
+	for p in peasants:
+		if is_instance_valid(p) and p.selected and not p.is_structure:
+			sel.append(p)
+	if sel.is_empty():
+		return
+	var cp := pos
+	cp.x = clampf(cp.x, 24.0, 880.0)
+	cp.y = clampf(cp.y, 24.0, ARENA.y - 20.0)
+	var i := 0
+	for p in sel:
+		var ox := float((i % 6) * 22 - 55)
+		var oy := float((i / 6) * 22)
+		var pt := cp + Vector2(ox, oy)
+		p.command_point = pt
+		if phase == Phase.DEPLOY:
+			p.global_position = pt
+		p.queue_redraw()
+		i += 1
+
+func _select_in_rect(r: Rect2) -> void:
+	# A tiny rect (a stray click read as a drag) selects nothing extra.
+	for p in peasants:
+		if not is_instance_valid(p):
+			continue
+		var s: bool = (not p.is_structure) and r.has_point(p.global_position)
+		if p.selected != s:
+			p.selected = s
+			p.queue_redraw()
+
+func _clear_selection() -> void:
+	for p in peasants:
+		if is_instance_valid(p) and p.selected:
+			p.selected = false
+			p.queue_redraw()
+
+func _has_selection() -> bool:
+	for p in peasants:
+		if is_instance_valid(p) and p.selected:
+			return true
+	return false
 
 func _peasant_at(pos: Vector2):
 	var best = null
@@ -393,12 +434,6 @@ func _peasant_at(pos: Vector2):
 			best_d = d
 			best = p
 	return best
-
-func _cycle_unit_stance(u) -> void:
-	u.stance = (u.stance + 1) % 4
-	u.queue_redraw()
-	info_text = "%s -> %s" % [u.display_name, _stance_name(u.stance)]
-	_update_top()
 
 # ---------------------------------------------------------------- UI
 
@@ -421,9 +456,7 @@ func _build_shop_ui() -> void:
 		var b := _mk_button("Hire %s — %dg" % [h[0], cost], Vector2(x, y), Vector2(224, 28), func(): _buy(id))
 		b.disabled = gold < cost
 		y += 31
-	y += 6
-	_mk_button("Default stance: " + _stance_name(peasant_stance), Vector2(x, y), Vector2(224, 30), _toggle_stance)
-	y += 40
+	y += 10
 	_mk_button("Deploy for Battle %d  >>" % battle_num, Vector2(x, y), Vector2(224, 40), start_deploy)
 
 	# ---- Middle column: items ----
@@ -469,18 +502,16 @@ func _shop_header(text: String, x: float, y: float) -> void:
 func _build_deploy_ui() -> void:
 	_clear_panel()
 	var hint := Label.new()
-	hint.text = "DEPLOY  —  drag peasants to position; click a peasant to change its stance.\nMarkers:  red = Aggressive   blue = Hold   cyan = Defend   yellow = Follow"
+	hint.text = "DEPLOY  —  drag a box to select units, then click a spot to move them there.\nPosition your line, then Fight. You can keep giving orders during the battle."
 	hint.position = Vector2(16, 44)
 	hint.add_theme_font_size_override("font_size", 15)
 	panel.add_child(hint)
-	_mk_button("Set all: " + _stance_name(peasant_stance), Vector2(16, 96), Vector2(230, 34), _toggle_stance)
-	_mk_button("Fight!  >>", Vector2(16, 138), Vector2(230, 42), begin_fight)
+	_mk_button("Fight!  >>", Vector2(16, 96), Vector2(230, 42), begin_fight)
 	_build_roster_label()
 
 func _build_battle_ui() -> void:
 	_clear_panel()
-	_mk_button("Set all: " + _stance_name(peasant_stance), Vector2(16, 46), Vector2(200, 34), _toggle_stance)
-	rally_btn = _mk_button("Rally!", Vector2(226, 46), Vector2(130, 34), _rally)
+	rally_btn = _mk_button("Rally!", Vector2(16, 46), Vector2(130, 34), _rally)
 	# Consumable items along the bottom.
 	var cx := 16.0
 	for id in CONSUMABLE_DEFS:
@@ -619,8 +650,7 @@ func _use_consumable(id: String) -> void:
 			for i in 4:
 				var u := _make_unit("farmer", 0)
 				u.position = Vector2(90, 210 + i * 50)
-				u.home_pos = u.position
-				u.stance = peasant_stance
+				u.command_point = u.position
 				_apply_relics(u)
 				world.add_child(u)
 				peasants.append(u)
@@ -631,20 +661,6 @@ func _use_consumable(id: String) -> void:
 			flash_banner("Plague cured!", Color(0.6, 1, 0.6))
 	_build_battle_ui()
 	_update_top()
-
-func _toggle_stance() -> void:
-	peasant_stance = (peasant_stance + 1) % 4
-	for p in peasants:
-		if not p.is_structure:
-			p.stance = peasant_stance
-			p.queue_redraw()
-	match phase:
-		Phase.SHOP:
-			_build_shop_ui()
-		Phase.DEPLOY:
-			_build_deploy_ui()
-		Phase.BATTLE:
-			_build_battle_ui()
 
 func _rally() -> void:
 	if rally_cd <= 0.0:
@@ -665,20 +681,11 @@ func _process(delta: float) -> void:
 
 # ---------------------------------------------------------------- helpers / background
 
-func _stance_name(s: int) -> String:
-	match s:
-		Unit.Stance.AGGRESSIVE:
-			return "Aggressive"
-		Unit.Stance.HOLD:
-			return "Hold"
-		Unit.Stance.DEFEND:
-			return "Defend"
-		Unit.Stance.FOLLOW:
-			return "Follow"
-	return "?"
-
 func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, ARENA), Color(0.30, 0.45, 0.22))            # field
 	draw_rect(Rect2(Vector2.ZERO, Vector2(360, ARENA.y)), Color(0.34, 0.40, 0.20))  # your tilled plot
 	draw_line(Vector2(FENCE_X, 0), Vector2(FENCE_X, ARENA.y), Color(0.45, 0.32, 0.18), 4.0) # fence
 	draw_rect(Rect2(Vector2(900, 0), Vector2(252, ARENA.y)), Color(0.28, 0.30, 0.20)) # enemy approach
+	if _dragging:
+		draw_rect(_sel_rect, Color(1, 1, 0.4, 0.12))
+		draw_rect(_sel_rect, Color(1, 1, 0.4, 0.7), false, 1.5)
