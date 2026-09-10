@@ -12,6 +12,28 @@ const MAX_BATTLES := 12
 const START_ARMY := ["farmer", "farmer", "farmer", "militia"]
 const FENCE_X := 357.0
 
+# Run-wide passive upgrades (buy once, from the Traveling Merchant every 4th battle).
+const RELIC_DEFS := {
+	"sharp_tools":      {"name": "Sharpened Tools (+25% dmg)", "cost": 60},
+	"village_bell":     {"name": "Village Bell (+20% atk spd)", "cost": 60},
+	"blacksmith_forge": {"name": "Blacksmith's Forge (+3 armor)", "cost": 55},
+	"rat_charm":        {"name": "Rat-Catcher's Charm (cure immune)", "cost": 50},
+	"full_granary":     {"name": "Full Granary (+2 free farmers)", "cost": 50},
+	"fortifier":        {"name": "Fortifier (walls +80% HP)", "cost": 45},
+	"longbows":         {"name": "Longbows (archers +range/dmg)", "cost": 45},
+	"shields":          {"name": "Shields (militia/farmer +2 armor)", "cost": 40},
+	"sharpened_axes":   {"name": "Sharpened Axes (woodcutter +8)", "cost": 40},
+}
+# One-use tactical items, activated during battle.
+const CONSUMABLE_DEFS := {
+	"firepot":     {"name": "Firepot", "cost": 25},
+	"holy_water":  {"name": "Holy Water", "cost": 30},
+	"rally_horn":  {"name": "Rally Horn", "cost": 20},
+	"grain_bag":   {"name": "Bag of Grain", "cost": 25},
+	"plague_cure": {"name": "Plague Cure", "cost": 25},
+}
+const STRUCT_ITEMS := ["barricade", "spikes", "palisade", "stone_wall"]
+
 var gold: int = START_GOLD
 var battle_num: int = 1
 var army: Array = START_ARMY.duplicate()
@@ -21,6 +43,9 @@ var info_text: String = ""
 
 var rally_cd: float = 0.0
 var rally_time: float = 0.0
+
+var relics: Array = []
+var consumables: Dictionary = {}
 
 var peasants: Array = []
 var enemies: Array = []
@@ -77,6 +102,8 @@ func show_shop() -> void:
 		army.append("farmer")
 		info_text = "Your land lies empty — 2 serfs volunteer."
 	_build_shop_ui()
+	if battle_num % 4 == 0:
+		flash_banner("A traveling merchant has arrived!", Color(1, 0.85, 0.4))
 	_update_top()
 
 func start_deploy() -> void:
@@ -147,6 +174,8 @@ func _restart() -> void:
 	peasant_stance = Unit.Stance.AGGRESSIVE
 	rally_cd = 0.0
 	rally_time = 0.0
+	relics = []
+	consumables = {}
 	info_text = ""
 	show_shop()
 
@@ -167,8 +196,47 @@ func _spawn_peasants() -> void:
 			fight_i += 1
 		u.stance = peasant_stance
 		u.home_pos = u.position
+		_apply_relics(u)
 		world.add_child(u)
 		peasants.append(u)
+
+	# Full Granary relic: extra free farmers each deploy.
+	if "full_granary" in relics:
+		for k in 2:
+			var f := _make_unit("farmer", 0)
+			f.position = Vector2(90 + randf_range(-6, 6), 220 + k * 50 + fight_i * 4)
+			f.stance = peasant_stance
+			f.home_pos = f.position
+			_apply_relics(f)
+			world.add_child(f)
+			peasants.append(f)
+
+func _apply_relics(u: Unit) -> void:
+	for r in relics:
+		match r:
+			"sharp_tools":
+				u.damage *= 1.25
+			"village_bell":
+				u.attack_cooldown /= 1.2
+			"blacksmith_forge":
+				if not u.is_structure:
+					u.armor += 3
+			"rat_charm":
+				u.plague_immune = true
+			"fortifier":
+				if u.is_structure:
+					u.max_hp *= 1.8
+					u.hp = u.max_hp
+			"longbows":
+				if u.type_id == "archer":
+					u.attack_range += 40
+					u.damage += 3
+			"shields":
+				if u.type_id == "militia" or u.type_id == "farmer":
+					u.armor += 2
+			"sharpened_axes":
+				if u.type_id == "woodcutter":
+					u.damage += 8
 
 func _spawn_enemies() -> void:
 	var wave := GameData.generate_wave(battle_num)
@@ -303,40 +371,67 @@ func _cycle_unit_stance(u) -> void:
 
 func _build_shop_ui() -> void:
 	_clear_panel()
-	var x := 40.0
-	var y := 86.0
 
-	var title := Label.new()
-	title.text = "— War Council —   (Battle %d of %d)" % [battle_num, MAX_BATTLES]
-	title.position = Vector2(x, y)
-	title.add_theme_font_size_override("font_size", 22)
-	panel.add_child(title)
-	y += 42
-
+	# ---- Left column: recruit units ----
+	var x := 30.0
+	var y := 84.0
+	_shop_header("— War Council —  (Battle %d of %d)" % [battle_num, MAX_BATTLES], x, y)
+	y += 34
 	var hires := [
-		["Hire Farmer", "farmer"],
-		["Hire Militia", "militia"],
-		["Hire Archer", "archer"],
-		["Hire Woodcutter", "woodcutter"],
-		["Hire Hunter (vs beasts)", "hunter"],
-		["Hire Herbalist (cure)", "herbalist"],
-		["Hire Baker (heal)", "baker"],
-		["Hire Monk (haste)", "monk"],
-		["Build Barricade", "barricade"],
+		["Farmer", "farmer"], ["Militia", "militia"], ["Archer", "archer"],
+		["Woodcutter", "woodcutter"], ["Hunter (vs beasts)", "hunter"],
+		["Herbalist (cure)", "herbalist"], ["Baker (heal)", "baker"], ["Monk (haste)", "monk"],
 	]
 	for h in hires:
 		var id: String = h[1]
 		var cost: int = GameData.UNITS[id]["cost"]
-		var b := _mk_button("%s — %dg" % [h[0], cost], Vector2(x, y), Vector2(230, 34), func(): _buy(id))
+		var b := _mk_button("Hire %s — %dg" % [h[0], cost], Vector2(x, y), Vector2(224, 28), func(): _buy(id))
 		b.disabled = gold < cost
-		y += 38
+		y += 31
+	y += 6
+	_mk_button("Default stance: " + _stance_name(peasant_stance), Vector2(x, y), Vector2(224, 30), _toggle_stance)
+	y += 40
+	_mk_button("Deploy for Battle %d  >>" % battle_num, Vector2(x, y), Vector2(224, 40), start_deploy)
 
-	y += 8
-	_mk_button("Default stance: " + _stance_name(peasant_stance), Vector2(x, y), Vector2(230, 34), _toggle_stance)
-	y += 46
-	_mk_button("Deploy for Battle %d  >>" % battle_num, Vector2(x, y), Vector2(230, 46), start_deploy)
+	# ---- Middle column: items ----
+	var mx := 274.0
+	var my := 84.0
+	_shop_header("Defenses & Items", mx, my)
+	my += 34
+	for id in STRUCT_ITEMS:
+		var cost: int = GameData.UNITS[id]["cost"]
+		var b := _mk_button("Build %s — %dg" % [GameData.UNITS[id]["name"], cost], Vector2(mx, my), Vector2(252, 28), func(): _buy(id))
+		b.disabled = gold < cost
+		my += 31
+	my += 6
+	for id in CONSUMABLE_DEFS:
+		var d: Dictionary = CONSUMABLE_DEFS[id]
+		var have: int = int(consumables.get(id, 0))
+		var b := _mk_button("%s (x%d) — %dg" % [d["name"], have, d["cost"]], Vector2(mx, my), Vector2(252, 28), func(): _buy_consumable(id))
+		b.disabled = gold < int(d["cost"])
+		my += 31
+
+	# ---- Traveling merchant (every 4th battle): relics ----
+	if battle_num % 4 == 0:
+		my += 8
+		_shop_header("Traveling Merchant — Relics", mx, my)
+		my += 32
+		for id in RELIC_DEFS:
+			if id in relics:
+				continue
+			var d: Dictionary = RELIC_DEFS[id]
+			var b := _mk_button("%s — %dg" % [d["name"], d["cost"]], Vector2(mx, my), Vector2(252, 28), func(): _buy_relic(id))
+			b.disabled = gold < int(d["cost"])
+			my += 30
 
 	_build_roster_label()
+
+func _shop_header(text: String, x: float, y: float) -> void:
+	var l := Label.new()
+	l.text = text
+	l.position = Vector2(x, y)
+	l.add_theme_font_size_override("font_size", 19)
+	panel.add_child(l)
 
 func _build_deploy_ui() -> void:
 	_clear_panel()
@@ -353,6 +448,15 @@ func _build_battle_ui() -> void:
 	_clear_panel()
 	_mk_button("Set all: " + _stance_name(peasant_stance), Vector2(16, 46), Vector2(200, 34), _toggle_stance)
 	rally_btn = _mk_button("Rally!", Vector2(226, 46), Vector2(130, 34), _rally)
+	# Consumable items along the bottom.
+	var cx := 16.0
+	for id in CONSUMABLE_DEFS:
+		var have: int = int(consumables.get(id, 0))
+		if have <= 0:
+			continue
+		var d: Dictionary = CONSUMABLE_DEFS[id]
+		_mk_button("%s (x%d)" % [d["name"], have], Vector2(cx, ARENA.y - 48), Vector2(150, 34), func(): _use_consumable(id))
+		cx += 156
 
 func _build_roster_label() -> void:
 	var comp := {}
@@ -361,10 +465,14 @@ func _build_roster_label() -> void:
 	var atext := "Your forces:\n"
 	for id in comp:
 		atext += "  %d x %s\n" % [comp[id], GameData.UNITS[id]["name"]]
+	if not relics.is_empty():
+		atext += "\nRelics:\n"
+		for r in relics:
+			atext += "  * %s\n" % RELIC_DEFS[r]["name"]
 	var al := Label.new()
 	al.text = atext
-	al.position = Vector2(ARENA.x - 300, 86)
-	al.add_theme_font_size_override("font_size", 18)
+	al.position = Vector2(ARENA.x - 300, 84)
+	al.add_theme_font_size_override("font_size", 15)
 	panel.add_child(al)
 
 func _mk_button(text: String, pos: Vector2, size: Vector2, cb: Callable) -> Button:
@@ -422,6 +530,73 @@ func _buy(id: String) -> void:
 	else:
 		info_text = "Not enough gold for %s." % GameData.UNITS[id]["name"]
 	_build_shop_ui()
+	_update_top()
+
+func _buy_relic(id: String) -> void:
+	if id in relics:
+		return
+	var cost: int = int(RELIC_DEFS[id]["cost"])
+	if gold >= cost:
+		gold -= cost
+		relics.append(id)
+		info_text = "Acquired %s." % RELIC_DEFS[id]["name"]
+	else:
+		info_text = "Not enough gold."
+	_build_shop_ui()
+	_update_top()
+
+func _buy_consumable(id: String) -> void:
+	var cost: int = int(CONSUMABLE_DEFS[id]["cost"])
+	if gold >= cost:
+		gold -= cost
+		consumables[id] = int(consumables.get(id, 0)) + 1
+		info_text = "Bought %s." % CONSUMABLE_DEFS[id]["name"]
+	else:
+		info_text = "Not enough gold."
+	_build_shop_ui()
+	_update_top()
+
+func _use_consumable(id: String) -> void:
+	if phase != Phase.BATTLE or int(consumables.get(id, 0)) <= 0:
+		return
+	consumables[id] = int(consumables[id]) - 1
+	match id:
+		"firepot":
+			var sorted := enemies.duplicate()
+			sorted.sort_custom(func(a, b): return a.global_position.x < b.global_position.x)
+			var n := 0
+			for e in sorted:
+				if is_instance_valid(e):
+					e.ignite(6.0, 4.0)
+					n += 1
+				if n >= 8:
+					break
+			flash_banner("Firepot!", Color(1, 0.6, 0.2))
+		"holy_water":
+			for e in enemies:
+				if is_instance_valid(e) and e.applies_plague:
+					e.take_damage(45.0, true)
+			for p in peasants:
+				p.plague_time = 0.0
+			flash_banner("Holy Water!", Color(0.8, 0.9, 1))
+		"rally_horn":
+			rally_time = 5.0
+			flash_banner("Rally!", Color(1, 0.9, 0.4))
+		"grain_bag":
+			for i in 4:
+				var u := _make_unit("farmer", 0)
+				u.position = Vector2(90, 210 + i * 50)
+				u.home_pos = u.position
+				u.stance = peasant_stance
+				_apply_relics(u)
+				world.add_child(u)
+				peasants.append(u)
+			flash_banner("Reinforcements!", Color(0.7, 1, 0.7))
+		"plague_cure":
+			for p in peasants:
+				p.plague_time = 0.0
+			flash_banner("Plague cured!", Color(0.6, 1, 0.6))
+	_build_battle_ui()
 	_update_top()
 
 func _toggle_stance() -> void:

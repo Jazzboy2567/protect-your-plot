@@ -21,6 +21,8 @@ const UNITS := {
 	"plague_doctor":{"id":"plague_doctor","name":"Plague Doctor","hp":40,"damage":9,"range":8,"cooldown":1.0,"speed":52,"radius":8,"cost":45,"plague_immune":true,"applies_plague":true,"color":Color(0.35,0.45,0.55)},
 	"barricade":  {"id":"barricade","name":"Barricade","hp":220,"damage":0,"range":0,"cooldown":1.0,"speed":0,"radius":14,"cost":30,"structure":true,"color":Color(0.50,0.35,0.20)},
 	"spikes":     {"id":"spikes","name":"Spike Barricade","hp":150,"damage":0,"range":0,"cooldown":1.0,"speed":0,"radius":13,"cost":40,"structure":true,"color":Color(0.45,0.42,0.40)},
+	"palisade":   {"id":"palisade","name":"Palisade","hp":380,"damage":0,"range":0,"cooldown":1.0,"speed":0,"radius":15,"cost":45,"structure":true,"color":Color(0.46,0.33,0.19)},
+	"stone_wall": {"id":"stone_wall","name":"Stone Wall","hp":600,"damage":0,"range":0,"cooldown":1.0,"speed":0,"radius":16,"cost":70,"structure":true,"color":Color(0.55,0.55,0.58)},
 
 	# --- Enemies (right side) — reddish ---
 	"sheep":       {"id":"sheep","name":"Sheep","hp":18,"damage":2,"range":6,"cooldown":1.2,"speed":45,"radius":8,"drop":3,"beast":true,"color":Color(0.90,0.90,0.90)},
