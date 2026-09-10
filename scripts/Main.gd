@@ -28,6 +28,7 @@ var hud: CanvasLayer
 var top_label: Label
 var panel: Control
 var rally_btn: Button
+var banner: Label
 
 func _ready() -> void:
 	world = Node2D.new()
@@ -45,6 +46,15 @@ func _ready() -> void:
 	panel.set_anchors_preset(Control.PRESET_FULL_RECT)
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud.add_child(panel)
+
+	banner = Label.new()
+	banner.add_theme_font_size_override("font_size", 48)
+	banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	banner.size = Vector2(ARENA.x, 60)
+	banner.position = Vector2(0, ARENA.y * 0.30)
+	banner.modulate = Color(1, 1, 1, 0)
+	banner.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud.add_child(banner)
 
 	show_shop()
 
@@ -66,6 +76,8 @@ func start_battle() -> void:
 	_spawn_peasants()
 	_spawn_enemies()
 	_build_battle_ui()
+	if battle_num % 4 == 0:
+		flash_banner("The Black Death approaches!", Color(0.9, 0.4, 0.9))
 	_update_top()
 
 func _win_battle() -> void:
@@ -74,6 +86,7 @@ func _win_battle() -> void:
 	var tax := 10 + 2 * survivors
 	gold += tax
 	info_text = "Victory! Tax +%dg. Survivors: %d" % [tax, survivors]
+	flash_banner("Battle %d won!  +%dg" % [battle_num, tax], Color(0.5, 0.95, 0.5))
 
 	# Persist survivors into the roster; dead peasants are lost.
 	var new_army: Array = []
@@ -257,6 +270,27 @@ func _mk_button(text: String, pos: Vector2, size: Vector2, cb: Callable) -> Butt
 	b.pressed.connect(cb)
 	panel.add_child(b)
 	return b
+
+func flash_banner(text: String, color: Color) -> void:
+	banner.text = text
+	banner.modulate = Color(color.r, color.g, color.b, 1.0)
+	var t := create_tween()
+	t.tween_interval(0.7)
+	t.tween_property(banner, "modulate:a", 0.0, 0.9)
+
+func spawn_float_text(pos: Vector2, text: String, color: Color) -> void:
+	var l := Label.new()
+	l.text = text
+	l.add_theme_font_size_override("font_size", 14)
+	l.modulate = color
+	l.position = pos
+	l.z_index = 100
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	world.add_child(l)
+	var t := create_tween()
+	t.tween_property(l, "position:y", pos.y - 22.0, 0.6)
+	t.parallel().tween_property(l, "modulate:a", 0.0, 0.6)
+	t.tween_callback(l.queue_free)
 
 func _clear_panel() -> void:
 	rally_btn = null

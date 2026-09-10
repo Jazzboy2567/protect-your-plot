@@ -24,6 +24,8 @@ var gold_drop: int = 0
 
 var target = null
 var _cd: float = 0.0
+var _flash: float = 0.0
+var _dead: bool = false
 
 func setup(def: Dictionary, _team: int, _main) -> void:
 	main = _main
@@ -42,8 +44,13 @@ func setup(def: Dictionary, _team: int, _main) -> void:
 	body_color = def.get("color", Color(0.78, 0.80, 0.85))
 	_cd = randf() * attack_cooldown
 
+func _process(delta: float) -> void:
+	if _flash > 0.0:
+		_flash -= delta
+		queue_redraw()
+
 func _physics_process(delta: float) -> void:
-	if is_structure or main == null:
+	if _dead or is_structure or main == null:
 		return
 	_cd -= delta
 
@@ -78,15 +85,27 @@ func _physics_process(delta: float) -> void:
 		global_position += to_t / maxf(dist, 0.001) * move_speed * delta
 
 func take_damage(amount: float) -> void:
+	if _dead:
+		return
 	hp -= amount
+	_flash = 0.12
+	if main and amount >= 3.0:
+		main.spawn_float_text(global_position + Vector2(0, -radius - 4), str(int(round(amount))), Color(1, 0.92, 0.45))
 	queue_redraw()
 	if hp <= 0.0:
 		die()
 
 func die() -> void:
+	if _dead:
+		return
+	_dead = true
 	if main:
 		main.on_unit_died(self)
-	queue_free()
+	# Fade-and-pop the corpse out (logic already removed it from the arrays).
+	var t := create_tween()
+	t.tween_property(self, "modulate:a", 0.0, 0.18)
+	t.parallel().tween_property(self, "scale", Vector2(1.5, 1.5), 0.18)
+	t.tween_callback(queue_free)
 
 func _draw() -> void:
 	# HP bar
@@ -97,13 +116,17 @@ func _draw() -> void:
 	var bar_col := Color(0.25, 0.9, 0.3) if team == 0 else Color(0.9, 0.3, 0.2)
 	draw_rect(Rect2(-radius, bar_y, w * frac, 3.0), bar_col)
 
+	# Hit flash: briefly wash the body toward white when struck.
+	var c := body_color
+	if _flash > 0.0:
+		c = body_color.lerp(Color.WHITE, clampf(_flash / 0.12, 0.0, 1.0) * 0.85)
+
 	if is_structure:
-		draw_rect(Rect2(-radius, -radius, radius * 2.0, radius * 2.0), body_color)
+		draw_rect(Rect2(-radius, -radius, radius * 2.0, radius * 2.0), c)
 		draw_rect(Rect2(-radius, -radius, radius * 2.0, radius * 2.0), Color(0.25, 0.16, 0.08), false, 2.0)
 		return
 
 	# Stick figure
-	var c := body_color
 	draw_circle(Vector2(0, -radius * 0.5), radius * 0.45, c)          # head
 	draw_line(Vector2(0, -radius * 0.1), Vector2(0, radius * 0.6), c, 2.0)   # body
 	draw_line(Vector2(-radius * 0.5, radius * 0.15), Vector2(radius * 0.5, radius * 0.15), c, 2.0)  # arms
