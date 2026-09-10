@@ -33,6 +33,8 @@ var applies_slow: bool = false
 var knockback: float = 0.0
 var bonus_beast: float = 1.0          # damage multiplier vs beast enemies
 var behavior: String = ""             # "" or "diver" (target the backline)
+var crit_chance: float = 0.0          # 0..1 chance to crit
+var crit_mult: float = 1.5            # crit damage multiplier
 
 var plague_time: float = 0.0
 var plague_dps: float = 0.0
@@ -159,7 +161,10 @@ func _physics_process(delta: float) -> void:
 		var dmg := damage
 		if bonus_beast > 1.0 and target.is_beast:
 			dmg *= bonus_beast
-		target.take_damage(dmg * main.damage_mult(team), pierce)
+		var is_crit := crit_chance > 0.0 and randf() < crit_chance
+		if is_crit:
+			dmg *= crit_mult
+		target.take_damage(dmg * main.damage_mult(team), pierce, is_crit)
 		if applies_plague:
 			target.infect(3.0, 4.0)
 		if applies_burn:
@@ -194,14 +199,16 @@ func _movement_goal(has_t: bool, dist: float, reach: float):
 		return command_point
 	return null
 
-func take_damage(amount: float, pierce_flag: bool = false) -> void:
+func take_damage(amount: float, pierce_flag: bool = false, is_crit: bool = false) -> void:
 	if _dead:
 		return
 	var dealt := amount if pierce_flag else maxf(1.0, amount - armor)
 	hp -= dealt
 	_flash = 0.12
 	if main and dealt >= 3.0:
-		main.spawn_float_text(global_position + Vector2(0, -radius - 4), str(int(round(dealt))), Color(1, 0.92, 0.45))
+		var col := Color(1, 0.5, 0.15) if is_crit else Color(1, 0.92, 0.45)
+		var txt := str(int(round(dealt))) + ("!" if is_crit else "")
+		main.spawn_float_text(global_position + Vector2(0, -radius - 4), txt, col)
 	queue_redraw()
 	if hp <= 0.0:
 		die()

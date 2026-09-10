@@ -12,6 +12,12 @@ const MAX_BATTLES := 12
 const START_ARMY := ["farmer", "farmer", "farmer", "militia"]
 const FENCE_X := 357.0
 
+# Peasants join free (capped); specialists cost gold (capped); buildings cost gold.
+const PEASANT_IDS := ["farmer", "militia"]
+const SPECIALIST_IDS := ["archer", "woodcutter", "hunter", "herbalist", "fisherman", "torchbearer", "baker", "monk", "plague_doctor"]
+const BUILDING_IDS := ["barricade", "spikes", "palisade", "stone_wall", "church"]
+const RECRUIT_CAP := 3
+
 # Run-wide passive upgrades (buy once, from the Traveling Merchant every 4th battle).
 const RELIC_DEFS := {
 	"sharp_tools":      {"name": "Sharpened Tools (+25% dmg)", "cost": 60},
@@ -23,6 +29,12 @@ const RELIC_DEFS := {
 	"longbows":         {"name": "Longbows (archers +range/dmg)", "cost": 45},
 	"shields":          {"name": "Shields (militia/farmer +2 armor)", "cost": 40},
 	"sharpened_axes":   {"name": "Sharpened Axes (woodcutter +8)", "cost": 40},
+	"keen_edge":        {"name": "Keen Edge (+15% crit)", "cost": 55},
+	"warhorn":          {"name": "War Horn (+15% atk speed)", "cost": 50},
+	"swift_boots":      {"name": "Swift Boots (+20% move speed)", "cost": 40},
+	"iron_rations":     {"name": "Iron Rations (+25% max HP)", "cost": 50},
+	"hawk_eye":         {"name": "Hawk Eye (ranged +30 range)", "cost": 45},
+	"berserkers_brew":  {"name": "Berserker's Brew (+40% dmg, -15% HP)", "cost": 55},
 }
 # One-use tactical items, activated during battle.
 const CONSUMABLE_DEFS := {
@@ -45,6 +57,9 @@ var rally_time: float = 0.0
 
 var relics: Array = []
 var consumables: Dictionary = {}
+var peasant_recruits: int = RECRUIT_CAP
+var specialist_recruits: int = RECRUIT_CAP
+var dead_this_battle: Array = []
 
 var peasants: Array = []
 var enemies: Array = []
@@ -127,6 +142,10 @@ func _toggle_fullscreen() -> void:
 func show_shop() -> void:
 	phase = Phase.SHOP
 	_despawn_all()
+	# Recruit allowances refill at the start of each 4-round cycle.
+	if battle_num % 4 == 1:
+		peasant_recruits = RECRUIT_CAP
+		specialist_recruits = RECRUIT_CAP
 	if army.is_empty():
 		army.append("farmer")
 		army.append("farmer")
@@ -148,6 +167,7 @@ func start_deploy() -> void:
 
 func begin_fight() -> void:
 	phase = Phase.BATTLE
+	dead_this_battle.clear()
 	_build_battle_ui()
 	_update_top()
 
@@ -164,6 +184,12 @@ func _win_battle() -> void:
 	for p in peasants:
 		new_army.append(p.type_id)
 	army = new_army
+
+	# A surviving Church revives one fallen unit for the next battle.
+	if "church" in army and not dead_this_battle.is_empty():
+		var revived: String = dead_this_battle[0]
+		army.append(revived)
+		info_text += "  The church revives a %s." % GameData.UNITS[revived]["name"]
 
 	battle_num += 1
 	if battle_num > MAX_BATTLES:
@@ -205,6 +231,9 @@ func _restart() -> void:
 	rally_time = 0.0
 	relics = []
 	consumables = {}
+	peasant_recruits = RECRUIT_CAP
+	specialist_recruits = RECRUIT_CAP
+	dead_this_battle = []
 	info_text = ""
 	show_shop()
 
@@ -264,6 +293,23 @@ func _apply_relics(u: Unit) -> void:
 			"sharpened_axes":
 				if u.type_id == "woodcutter":
 					u.damage += 8
+			"keen_edge":
+				u.crit_chance += 0.15
+			"warhorn":
+				u.attack_cooldown /= 1.15
+			"swift_boots":
+				if not u.is_structure:
+					u.move_speed *= 1.2
+			"iron_rations":
+				u.max_hp *= 1.25
+				u.hp = u.max_hp
+			"hawk_eye":
+				if u.attack_range >= 100.0:
+					u.attack_range += 30
+			"berserkers_brew":
+				u.damage *= 1.4
+				u.max_hp *= 0.85
+				u.hp = u.max_hp
 
 func _spawn_enemies() -> void:
 	var wave := GameData.generate_wave(battle_num)
@@ -332,6 +378,8 @@ func damage_mult(team: int) -> float:
 func on_unit_died(u: Unit) -> void:
 	if u.team == 1 and phase == Phase.BATTLE:
 		gold += u.gold_drop
+	elif u.team == 0 and phase == Phase.BATTLE and not u.is_structure:
+		dead_this_battle.append(u.type_id)
 	peasants.erase(u)
 	enemies.erase(u)
 	if phase != Phase.BATTLE:
@@ -440,57 +488,61 @@ func _peasant_at(pos: Vector2):
 func _build_shop_ui() -> void:
 	_clear_panel()
 
-	# ---- Left column: recruit units ----
-	var x := 30.0
-	var y := 84.0
-	_shop_header("— War Council —  (Battle %d of %d)" % [battle_num, MAX_BATTLES], x, y)
-	y += 34
-	var hires := [
-		["Farmer", "farmer"], ["Militia", "militia"], ["Archer", "archer"],
-		["Woodcutter", "woodcutter"], ["Hunter (vs beasts)", "hunter"],
-		["Herbalist (cure)", "herbalist"], ["Baker (heal)", "baker"], ["Monk (haste)", "monk"],
-	]
-	for h in hires:
-		var id: String = h[1]
+	# ---- Left column: recruits (peasants free/capped, specialists paid/capped) ----
+	var x := 24.0
+	var y := 82.0
+	_shop_header("Peasants (free) — %d left" % peasant_recruits, x, y)
+	y += 30
+	for id in PEASANT_IDS:
+		var b := _mk_button("Call %s  (free)" % GameData.UNITS[id]["name"], Vector2(x, y), Vector2(232, 26), func(): _buy(id))
+		b.disabled = peasant_recruits <= 0
+		y += 28
+	y += 8
+	_shop_header("Specialists (gold) — %d left" % specialist_recruits, x, y)
+	y += 30
+	for id in SPECIALIST_IDS:
 		var cost: int = GameData.UNITS[id]["cost"]
-		var b := _mk_button("Hire %s — %dg" % [h[0], cost], Vector2(x, y), Vector2(224, 28), func(): _buy(id))
-		b.disabled = gold < cost
-		y += 31
+		var b := _mk_button("%s — %dg" % [GameData.UNITS[id]["name"], cost], Vector2(x, y), Vector2(232, 26), func(): _buy(id))
+		b.disabled = specialist_recruits <= 0 or gold < cost
+		y += 28
 	y += 10
-	_mk_button("Deploy for Battle %d  >>" % battle_num, Vector2(x, y), Vector2(224, 40), start_deploy)
+	_mk_button("Deploy for Battle %d  >>" % battle_num, Vector2(x, y), Vector2(232, 38), start_deploy)
 
-	# ---- Middle column: items ----
-	var mx := 274.0
-	var my := 84.0
-	_shop_header("Defenses & Items", mx, my)
-	my += 34
-	for id in STRUCT_ITEMS:
+	# ---- Middle column: buildings + consumables ----
+	var mx := 288.0
+	var my := 82.0
+	_shop_header("Buildings", mx, my)
+	my += 30
+	for id in BUILDING_IDS:
 		var cost: int = GameData.UNITS[id]["cost"]
-		var b := _mk_button("Build %s — %dg" % [GameData.UNITS[id]["name"], cost], Vector2(mx, my), Vector2(252, 28), func(): _buy(id))
+		var b := _mk_button("Build %s — %dg" % [GameData.UNITS[id]["name"], cost], Vector2(mx, my), Vector2(250, 26), func(): _buy(id))
 		b.disabled = gold < cost
-		my += 31
-	my += 6
+		my += 28
+	my += 8
+	_shop_header("Consumables", mx, my)
+	my += 30
 	for id in CONSUMABLE_DEFS:
 		var d: Dictionary = CONSUMABLE_DEFS[id]
 		var have: int = int(consumables.get(id, 0))
-		var b := _mk_button("%s (x%d) — %dg" % [d["name"], have, d["cost"]], Vector2(mx, my), Vector2(252, 28), func(): _buy_consumable(id))
+		var b := _mk_button("%s (x%d) — %dg" % [d["name"], have, d["cost"]], Vector2(mx, my), Vector2(250, 26), func(): _buy_consumable(id))
 		b.disabled = gold < int(d["cost"])
-		my += 31
+		my += 28
 
-	# ---- Traveling merchant (every 4th battle): relics ----
+	# ---- Right column: merchant relics every 4th battle, else roster ----
 	if battle_num % 4 == 0:
-		my += 8
-		_shop_header("Traveling Merchant — Relics", mx, my)
-		my += 32
+		var rx := 560.0
+		var ry := 82.0
+		_shop_header("Traveling Merchant — Relics", rx, ry)
+		ry += 30
 		for id in RELIC_DEFS:
 			if id in relics:
 				continue
 			var d: Dictionary = RELIC_DEFS[id]
-			var b := _mk_button("%s — %dg" % [d["name"], d["cost"]], Vector2(mx, my), Vector2(252, 28), func(): _buy_relic(id))
+			var b := _mk_button("%s — %dg" % [d["name"], d["cost"]], Vector2(rx, ry), Vector2(310, 24), func(): _buy_relic(id))
 			b.disabled = gold < int(d["cost"])
-			my += 30
-
-	_build_roster_label()
+			ry += 26
+	else:
+		_build_roster_label()
 
 func _shop_header(text: String, x: float, y: float) -> void:
 	var l := Label.new()
@@ -586,13 +638,32 @@ func _update_top() -> void:
 # ---------------------------------------------------------------- actions
 
 func _buy(id: String) -> void:
+	var uname: String = GameData.UNITS[id]["name"]
 	var cost: int = GameData.UNITS[id]["cost"]
-	if gold >= cost:
-		gold -= cost
-		army.append(id)
-		info_text = "Recruited %s." % GameData.UNITS[id]["name"]
-	else:
-		info_text = "Not enough gold for %s." % GameData.UNITS[id]["name"]
+	if id in PEASANT_IDS:
+		if peasant_recruits <= 0:
+			info_text = "No more peasants will join this cycle."
+		else:
+			peasant_recruits -= 1
+			army.append(id)
+			info_text = "%s joins your service (free)." % uname
+	elif id in SPECIALIST_IDS:
+		if specialist_recruits <= 0:
+			info_text = "No more specialists will join this cycle."
+		elif gold < cost:
+			info_text = "Not enough gold for %s." % uname
+		else:
+			gold -= cost
+			specialist_recruits -= 1
+			army.append(id)
+			info_text = "%s enters your service." % uname
+	else:  # building / structure
+		if gold < cost:
+			info_text = "Not enough gold for %s." % uname
+		else:
+			gold -= cost
+			army.append(id)
+			info_text = "Built %s." % uname
 	_build_shop_ui()
 	_update_top()
 
