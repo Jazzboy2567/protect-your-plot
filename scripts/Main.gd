@@ -230,6 +230,8 @@ func _build_shop_ui() -> void:
 		["Hire Militia", "militia"],
 		["Hire Archer", "archer"],
 		["Hire Woodcutter", "woodcutter"],
+		["Hire Baker (heal)", "baker"],
+		["Hire Monk (haste)", "monk"],
 		["Build Barricade", "barricade"],
 	]
 	for h in hires:
