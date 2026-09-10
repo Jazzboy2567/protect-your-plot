@@ -25,9 +25,24 @@ var body_color: Color = Color(0.78, 0.80, 0.85)
 var gold_drop: int = 0
 var armor: float = 0.0                 # flat damage reduction (min 1 damage taken)
 var pierce: bool = false               # attacks ignore target armor
-var aura: String = ""                  # "", "heal", or "haste"
+var aura: String = ""                  # "", "heal", "haste", or "cleanse"
 var aura_range: float = 0.0
 var aura_value: float = 0.0            # heal = hp/sec to allies; haste = attack-speed bonus
+var is_beast: bool = false
+var plague_immune: bool = false
+var applies_plague: bool = false
+var applies_burn: bool = false
+var applies_slow: bool = false
+var knockback: float = 0.0
+var bonus_beast: float = 1.0          # damage multiplier vs beast enemies
+var behavior: String = ""             # "" or "diver" (target the backline)
+
+var plague_time: float = 0.0
+var plague_dps: float = 0.0
+var burn_time: float = 0.0
+var burn_dps: float = 0.0
+var slow_time: float = 0.0
+var _spread_cd: float = 0.0
 
 var home_pos: Vector2 = Vector2.ZERO   # anchor for Hold/Defend, drop point from deploy
 var leader = null                      # follow target for FOLLOW stance
@@ -55,6 +70,14 @@ func setup(def: Dictionary, _team: int, _main) -> void:
 	aura = def.get("aura", "")
 	aura_range = float(def.get("aura_range", 0))
 	aura_value = float(def.get("aura_value", 0))
+	is_beast = bool(def.get("beast", false))
+	plague_immune = bool(def.get("plague_immune", false))
+	applies_plague = bool(def.get("applies_plague", false))
+	applies_burn = bool(def.get("applies_burn", false))
+	applies_slow = bool(def.get("applies_slow", false))
+	knockback = float(def.get("knockback", 0))
+	bonus_beast = float(def.get("bonus_beast", 1.0))
+	behavior = def.get("behavior", "")
 	body_color = def.get("color", Color(0.78, 0.80, 0.85))
 	_cd = randf() * attack_cooldown
 
@@ -70,9 +93,35 @@ func _physics_process(delta: float) -> void:
 		return
 	_cd -= delta
 
-	# Acquire / re-acquire a target.
+	# Damage-over-time: plague spreads to nearby allies; burn does not.
+	if slow_time > 0.0:
+		slow_time -= delta
+	var dot := false
+	if plague_time > 0.0:
+		plague_time -= delta
+		hp -= plague_dps * delta
+		dot = true
+		_spread_cd -= delta
+		if _spread_cd <= 0.0:
+			_spread_cd = 1.0
+			main.try_spread_plague(self)
+	if burn_time > 0.0:
+		burn_time -= delta
+		hp -= burn_dps * delta
+		dot = true
+	if dot:
+		queue_redraw()
+		if hp <= 0.0:
+			die()
+			return
+
+	# Acquire / re-acquire a target (divers go for your backline).
 	if target == null or not is_instance_valid(target) or target.hp <= 0.0:
-		target = main.get_nearest_enemy(self)
+		target = null
+		if team == 1 and behavior == "diver":
+			target = main.get_backline_peasant()
+		if target == null:
+			target = main.get_nearest_enemy(self)
 
 	# Single ally pass: light separation + collect nearby aura effects.
 	var sep := Vector2.ZERO
@@ -91,6 +140,9 @@ func _physics_process(delta: float) -> void:
 				haste += a.aura_value
 			elif a.aura == "heal":
 				heal_rate += a.aura_value
+			elif a.aura == "cleanse" and plague_time > 0.0:
+				plague_time = 0.0
+				queue_redraw()
 	if sep != Vector2.ZERO:
 		global_position += sep * 0.5
 	if heal_rate > 0.0 and hp < max_hp:
@@ -104,10 +156,24 @@ func _physics_process(delta: float) -> void:
 		dist = global_position.distance_to(target.global_position)
 		reach = attack_range + radius + target.radius
 
-	# Attack whatever is in range.
+	# Attack whatever is in range, applying on-hit effects.
 	if has_t and dist <= reach and _cd <= 0.0:
 		_cd = attack_cooldown / (1.0 + haste)
-		target.take_damage(damage * main.damage_mult(team), pierce)
+		var dmg := damage
+		if bonus_beast > 1.0 and target.is_beast:
+			dmg *= bonus_beast
+		target.take_damage(dmg * main.damage_mult(team), pierce)
+		if applies_plague:
+			target.infect(3.0, 4.0)
+		if applies_burn:
+			target.ignite(3.0, 3.0)
+		if applies_slow:
+			target.slow_for(1.5)
+		if knockback > 0.0:
+			var kb: Vector2 = target.global_position - global_position
+			var kl := kb.length()
+			if kl > 0.001:
+				target.global_position += kb / kl * knockback
 
 	# Move toward the goal dictated by stance (enemies always behave AGGRESSIVE).
 	var goal = _movement_goal(has_t, dist, reach)
@@ -115,7 +181,8 @@ func _physics_process(delta: float) -> void:
 		var dir: Vector2 = goal - global_position
 		var dl2 := dir.length()
 		if dl2 > 0.001:
-			global_position += dir / dl2 * move_speed * delta
+			var spd := move_speed * (0.5 if slow_time > 0.0 else 1.0)
+			global_position += dir / dl2 * spd * delta
 
 func _movement_goal(has_t: bool, dist: float, reach: float):
 	if team == 1 or stance == Stance.AGGRESSIVE:
@@ -152,6 +219,21 @@ func take_damage(amount: float, pierce_flag: bool = false) -> void:
 	if hp <= 0.0:
 		die()
 
+func infect(dps: float, t: float) -> void:
+	if plague_immune or _dead:
+		return
+	plague_dps = maxf(plague_dps, dps)
+	plague_time = maxf(plague_time, t)
+
+func ignite(dps: float, t: float) -> void:
+	if _dead:
+		return
+	burn_dps = maxf(burn_dps, dps)
+	burn_time = maxf(burn_time, t)
+
+func slow_for(t: float) -> void:
+	slow_time = maxf(slow_time, t)
+
 func die() -> void:
 	if _dead:
 		return
@@ -177,6 +259,8 @@ func _draw() -> void:
 	var c := body_color
 	if _flash > 0.0:
 		c = body_color.lerp(Color.WHITE, clampf(_flash / 0.12, 0.0, 1.0) * 0.85)
+	elif plague_time > 0.0:
+		c = body_color.lerp(Color(0.3, 0.8, 0.2), 0.5)   # sickly green when infected
 
 	if is_structure:
 		draw_rect(Rect2(-radius, -radius, radius * 2.0, radius * 2.0), c)

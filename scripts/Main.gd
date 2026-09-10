@@ -224,6 +224,25 @@ func get_follow_leader(u: Unit):
 			best = p
 	return best
 
+func get_backline_peasant():
+	var best = null
+	var best_x := INF
+	for p in peasants:
+		if not is_instance_valid(p) or p.hp <= 0.0 or p.is_structure:
+			continue
+		if p.global_position.x < best_x:
+			best_x = p.global_position.x
+			best = p
+	return best
+
+func try_spread_plague(u: Unit) -> void:
+	for a in get_allies(u):
+		if a == u or not is_instance_valid(a) or a.is_structure or a.plague_immune or a.plague_time > 0.0:
+			continue
+		if u.global_position.distance_to(a.global_position) < 34.0:
+			a.infect(u.plague_dps, 4.0)
+			return
+
 func damage_mult(team: int) -> float:
 	return 1.6 if (team == 0 and rally_time > 0.0) else 1.0
 
@@ -299,6 +318,8 @@ func _build_shop_ui() -> void:
 		["Hire Militia", "militia"],
 		["Hire Archer", "archer"],
 		["Hire Woodcutter", "woodcutter"],
+		["Hire Hunter (vs beasts)", "hunter"],
+		["Hire Herbalist (cure)", "herbalist"],
 		["Hire Baker (heal)", "baker"],
 		["Hire Monk (haste)", "monk"],
 		["Build Barricade", "barricade"],
