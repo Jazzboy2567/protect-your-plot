@@ -106,7 +106,22 @@ Fortifier, Blacksmith's Forge, Rat Catcher's Charm, Peasant Uprising, Conscripti
 
 ---
 
-## Implemented (what's in this repo now)
+## Redesign (current model)
+
+- **Fullscreen/scaling** (F11 or button; content scales to fit) and **battle speed** 1x/2x/3x.
+- **Command = RTS selection**, not stances: drag a box to select units, click a point to
+  send them (works mid-battle). Units hold their command point and engage foes within an
+  engage radius. Selection ring + live selection box.
+- **Tile grid + Castle:** your side is a build grid; a 4x4 **Castle Keep** is always present —
+  lose it and you lose. In Deploy, pick a building and click a tile to place it; **walls block**
+  enemies until destroyed. Placed buildings persist; destroyed ones must be rebuilt.
+- **Economy with scarcity:** peasants join **free but capped** (3 per 4-round cycle); specialists
+  cost gold and are **also capped** (3 per cycle); buildings cost gold. Gold can be saved.
+- **Relics = merchant only** (every 4th battle), including character buffs — **crit** (Keen Edge),
+  attack speed (War Horn), move speed, max HP, range, and a damage/HP tradeoff (Berserker's Brew).
+- **Church** building revives one fallen unit after each battle.
+
+## Implemented systems (detail)
 
 - ✅ Stick-figure auto-combat: targeting, attack, HP bars, death fade, hit-flash,
   floating damage numbers, victory/boss banners.
