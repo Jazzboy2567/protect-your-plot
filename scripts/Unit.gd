@@ -4,7 +4,9 @@ extends Node2D
 # One combatant (peasant, enemy, or structure). Drawn as a stick figure in _draw().
 # Behaviour: find nearest enemy -> move into range (unless Hold) -> attack on cooldown.
 
-enum Stance { AGGRESSIVE, HOLD }
+enum Stance { AGGRESSIVE, HOLD, DEFEND, FOLLOW }
+
+const STANCE_COLORS := [Color(1, 0.45, 0.3), Color(0.45, 0.6, 1), Color(0.3, 0.9, 0.9), Color(1, 0.9, 0.3)]
 
 var main = null                       # reference to Main (owns the unit arrays)
 var team: int = 0                     # 0 = peasant, 1 = enemy
@@ -27,6 +29,8 @@ var aura: String = ""                  # "", "heal", or "haste"
 var aura_range: float = 0.0
 var aura_value: float = 0.0            # heal = hp/sec to allies; haste = attack-speed bonus
 
+var home_pos: Vector2 = Vector2.ZERO   # anchor for Hold/Defend, drop point from deploy
+var leader = null                      # follow target for FOLLOW stance
 var target = null
 var _cd: float = 0.0
 var _flash: float = 0.0
@@ -62,6 +66,8 @@ func _process(delta: float) -> void:
 func _physics_process(delta: float) -> void:
 	if _dead or is_structure or main == null:
 		return
+	if not main.is_fighting():   # frozen during the deploy phase
+		return
 	_cd -= delta
 
 	# Acquire / re-acquire a target.
@@ -91,18 +97,48 @@ func _physics_process(delta: float) -> void:
 		hp = minf(max_hp, hp + heal_rate * delta)
 		queue_redraw()
 
-	if target == null:
-		return
+	var has_t: bool = target != null and is_instance_valid(target)
+	var dist: float = INF
+	var reach: float = attack_range + radius
+	if has_t:
+		dist = global_position.distance_to(target.global_position)
+		reach = attack_range + radius + target.radius
 
-	var to_t: Vector2 = target.global_position - global_position
-	var dist := to_t.length()
-	var reach: float = attack_range + radius + target.radius
-	if dist <= reach:
-		if _cd <= 0.0:
-			_cd = attack_cooldown / (1.0 + haste)
-			target.take_damage(damage * main.damage_mult(team), pierce)
-	elif stance != Stance.HOLD:
-		global_position += to_t / maxf(dist, 0.001) * move_speed * delta
+	# Attack whatever is in range.
+	if has_t and dist <= reach and _cd <= 0.0:
+		_cd = attack_cooldown / (1.0 + haste)
+		target.take_damage(damage * main.damage_mult(team), pierce)
+
+	# Move toward the goal dictated by stance (enemies always behave AGGRESSIVE).
+	var goal = _movement_goal(has_t, dist, reach)
+	if goal != null:
+		var dir: Vector2 = goal - global_position
+		var dl2 := dir.length()
+		if dl2 > 0.001:
+			global_position += dir / dl2 * move_speed * delta
+
+func _movement_goal(has_t: bool, dist: float, reach: float):
+	if team == 1 or stance == Stance.AGGRESSIVE:
+		return target.global_position if (has_t and dist > reach) else null
+	if stance == Stance.HOLD:
+		if (not has_t or dist > reach) and global_position.distance_to(home_pos) > 6.0:
+			return home_pos
+		return null
+	if stance == Stance.DEFEND:
+		if has_t and dist > reach and target.global_position.distance_to(home_pos) <= 130.0:
+			return target.global_position
+		if global_position.distance_to(home_pos) > 6.0:
+			return home_pos
+		return null
+	# FOLLOW
+	if has_t and dist <= reach:
+		return null
+	if leader == null or not is_instance_valid(leader) or leader._dead:
+		leader = main.get_follow_leader(self)
+	if leader != null:
+		var lp: Vector2 = leader.global_position + Vector2(-26, 0)
+		return lp if global_position.distance_to(lp) > 10.0 else null
+	return target.global_position if (has_t and dist > reach) else null
 
 func take_damage(amount: float, pierce_flag: bool = false) -> void:
 	if _dead:
@@ -153,3 +189,7 @@ func _draw() -> void:
 	draw_line(Vector2(-radius * 0.5, radius * 0.15), Vector2(radius * 0.5, radius * 0.15), c, 2.0)  # arms
 	draw_line(Vector2(0, radius * 0.6), Vector2(-radius * 0.4, radius), c, 2.0)  # left leg
 	draw_line(Vector2(0, radius * 0.6), Vector2(radius * 0.4, radius), c, 2.0)   # right leg
+
+	# Stance marker above your own units (colour-coded).
+	if team == 0:
+		draw_circle(Vector2(0, -radius - 14.0), 2.8, STANCE_COLORS[stance])
