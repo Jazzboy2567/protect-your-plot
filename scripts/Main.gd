@@ -65,6 +65,13 @@ const RELIC_DEFS := {
 	"hawk_eye":         {"name": "Hawk Eye (ranged +30 range)", "cost": 45},
 	"berserkers_brew":  {"name": "Berserker's Brew (+40% dmg, -15% HP)", "cost": 55},
 }
+# Who each relic buffs (shown as a category tag on the item).
+const RELIC_SCOPE := {
+	"sharp_tools": "Everyone", "village_bell": "Everyone", "blacksmith_forge": "Everyone",
+	"full_granary": "Peasants", "fortifier": "Walls", "longbows": "Archers", "shields": "Peasants",
+	"sharpened_axes": "Woodcutters", "keen_edge": "Everyone", "warhorn": "Everyone",
+	"swift_boots": "Everyone", "iron_rations": "Everyone", "hawk_eye": "Ranged", "berserkers_brew": "Everyone",
+}
 const STRUCT_ITEMS := ["barricade", "spikes", "palisade", "stone_wall"]
 
 var gold: int = START_GOLD
@@ -80,8 +87,8 @@ var relics: Array = []
 var contracts: Array = []      # specialist ids you've signed (max 4); only these are hireable
 var guild_offer: Array = []    # the specialist contracts on offer this interlude
 var shop_offer: Array = []     # the (few) relics on sale this interlude
-var peasant_recruits: int = RECRUIT_CAP
-var specialist_recruits: int = RECRUIT_CAP
+var recruits_left: int = RECRUIT_CAP          # shared 3 slots per interlude (peasant or specialist)
+var recruited_this_cycle: Array = []          # unit ids that filled the slots this interlude
 var dead_this_battle: Array = []
 var buildings: Array = []          # persistent placed buildings: {id, gx, gy}
 var _build_sel: String = ""        # building id selected for placement ("" = command mode)
@@ -97,6 +104,7 @@ var rally_btn: Button
 var banner: Label
 var ctrl_speed: Button
 var ctrl_full: Button
+var hover_label: Label
 var _speed_i: int = 0
 const SPEEDS := [1.0, 2.0, 3.0]
 
@@ -149,6 +157,24 @@ func _ready() -> void:
 	_style_button(ctrl_full)
 	hud.add_child(ctrl_full)
 
+	hover_label = Label.new()
+	hover_label.add_theme_color_override("font_color", COL_INK)
+	hover_label.add_theme_font_size_override("font_size", 12)
+	var hs := StyleBoxFlat.new()
+	hs.bg_color = Color(0.08, 0.07, 0.04, 0.96)
+	hs.border_color = COL_BORDER
+	hs.set_border_width_all(1)
+	hs.set_corner_radius_all(3)
+	hs.content_margin_left = 8
+	hs.content_margin_right = 8
+	hs.content_margin_top = 6
+	hs.content_margin_bottom = 6
+	hover_label.add_theme_stylebox_override("normal", hs)
+	hover_label.z_index = 200
+	hover_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hover_label.visible = false
+	hud.add_child(hover_label)
+
 	buildings = [{"id": "castle", "gx": CASTLE_GX, "gy": CASTLE_GY}, {"id": "church", "gx": 1, "gy": 8}]
 	show_shop()
 
@@ -177,8 +203,8 @@ func show_shop() -> void:
 		army.append("peasant")
 		info_text = "Your land lies empty — 2 peasants volunteer."
 	if is_interlude():
-		peasant_recruits = RECRUIT_CAP
-		specialist_recruits = RECRUIT_CAP
+		recruits_left = RECRUIT_CAP
+		recruited_this_cycle = []
 		guild_offer = _make_guild_offer()
 		shop_offer = _make_shop_offer()
 		open_guild()
@@ -306,8 +332,8 @@ func _restart() -> void:
 	contracts = []
 	guild_offer = []
 	shop_offer = []
-	peasant_recruits = RECRUIT_CAP
-	specialist_recruits = RECRUIT_CAP
+	recruits_left = RECRUIT_CAP
+	recruited_this_cycle = []
 	dead_this_battle = []
 	buildings = [{"id": "castle", "gx": CASTLE_GX, "gy": CASTLE_GY}, {"id": "church", "gx": 1, "gy": 8}]
 	_build_sel = ""
@@ -829,6 +855,11 @@ func _relic_card(id: String) -> Control:
 	nm.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	nm.custom_minimum_size = Vector2(208, 0)
 	v.add_child(nm)
+	var scope := Label.new()
+	scope.text = str(RELIC_SCOPE.get(id, "Everyone")).to_upper()
+	scope.add_theme_color_override("font_color", COL_GOLD)
+	scope.add_theme_font_size_override("font_size", 11)
+	v.add_child(scope)
 	var btn := _menu_button("Buy — %dg" % cost, func(): _buy_relic(id))
 	btn.custom_minimum_size = Vector2(208, 30)
 	btn.disabled = gold < cost
@@ -917,31 +948,51 @@ func _build_shop_ui() -> void:
 		sold.add_theme_color_override("font_color", COL_SOFT)
 		srow.add_child(sold)
 
-	# --- Recruit: peasant + contracted specialists ---
-	outer.add_child(_section_label("Recruit"))
-	var rrow := HBoxContainer.new()
-	rrow.add_theme_constant_override("separation", 10)
-	rrow.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	outer.add_child(rrow)
-	var pb := _menu_button("Peasant · free  (%d left)" % peasant_recruits, func(): _buy("peasant"))
-	pb.custom_minimum_size = Vector2(190, 30)
+	# --- Recruit: 3 slots filled from the palette below ---
+	outer.add_child(_section_label("Recruit — %d of %d slots left" % [recruits_left, RECRUIT_CAP]))
+	var slots := HBoxContainer.new()
+	slots.add_theme_constant_override("separation", 10)
+	slots.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	outer.add_child(slots)
+	for i in RECRUIT_CAP:
+		var slot := PanelContainer.new()
+		slot.add_theme_stylebox_override("panel", _card_style())
+		slot.custom_minimum_size = Vector2(150, 40)
+		var sl := Label.new()
+		sl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		if i < recruited_this_cycle.size():
+			sl.text = GameData.UNITS[recruited_this_cycle[i]]["name"]
+			sl.add_theme_color_override("font_color", COL_INK)
+		else:
+			sl.text = "— empty —"
+			sl.add_theme_color_override("font_color", COL_SOFT)
+		slot.add_child(sl)
+		slots.add_child(slot)
+
+	# Palette of units you can drop into a slot.
+	var pal := HBoxContainer.new()
+	pal.add_theme_constant_override("separation", 10)
+	pal.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	outer.add_child(pal)
+	var pb := _menu_button("Peasant · free", func(): _buy("peasant"))
+	pb.custom_minimum_size = Vector2(170, 30)
 	pb.tooltip_text = _unit_tooltip("peasant")
-	pb.disabled = peasant_recruits <= 0
-	rrow.add_child(pb)
+	pb.disabled = recruits_left <= 0
+	pal.add_child(pb)
 	if contracts.is_empty():
 		var hint := Label.new()
-		hint.text = "Sign guild contracts to hire specialists."
+		hint.text = "Sign guild contracts to unlock specialists."
 		hint.add_theme_color_override("font_color", COL_SOFT)
 		hint.add_theme_font_size_override("font_size", 13)
-		rrow.add_child(hint)
+		pal.add_child(hint)
 	else:
 		for id in contracts:
 			var cost: int = GameData.UNITS[id]["cost"]
-			var b := _menu_button("%s · %dg  (%d)" % [GameData.UNITS[id]["name"], cost, specialist_recruits], func(): _buy(id))
-			b.custom_minimum_size = Vector2(190, 30)
+			var b := _menu_button("%s · %dg" % [GameData.UNITS[id]["name"], cost], func(): _buy(id))
+			b.custom_minimum_size = Vector2(170, 30)
 			b.tooltip_text = _unit_tooltip(id)
-			b.disabled = specialist_recruits <= 0 or gold < cost
-			rrow.add_child(b)
+			b.disabled = recruits_left <= 0 or gold < cost
+			pal.add_child(b)
 
 	outer.add_child(HSeparator.new())
 	var dep := _menu_button("Deploy for Battle %d  >>" % battle_num, start_deploy)
@@ -1127,28 +1178,59 @@ func _update_top() -> void:
 		s += "\n" + info_text
 	top_label.text = s
 
+func _update_hover() -> void:
+	var mp := get_global_mouse_position()
+	var found = null
+	for u in peasants:
+		if is_instance_valid(u) and u.hp > 0.0 and mp.distance_to(u.global_position) <= u.radius + 5.0:
+			found = u
+			break
+	if found == null:
+		for u in enemies:
+			if is_instance_valid(u) and u.hp > 0.0 and mp.distance_to(u.global_position) <= u.radius + 5.0:
+				found = u
+				break
+	if found == null:
+		hover_label.visible = false
+		return
+	var rng: float = found.attack_range
+	var side := "Your unit" if found.team == 0 else "Enemy"
+	var txt := "%s (%s)\nHP: %d / %d" % [found.display_name, side, int(ceil(found.hp)), int(found.max_hp)]
+	if found.damage > 0.0:
+		txt += "\nDamage: %d\nAtk speed: %.1f / s" % [int(found.damage), 1.0 / maxf(found.attack_cooldown, 0.01)]
+	txt += "\nRange: %s" % ("melee" if rng <= 12.0 else str(int(rng)))
+	if found.armor > 0.0:
+		txt += "\nArmor: %d" % int(found.armor)
+	if found.heals:
+		txt += "\nHeals allies"
+	hover_label.text = txt
+	hover_label.position = mp + Vector2(14, 12)
+	hover_label.visible = true
+
 # ---------------------------------------------------------------- actions
 
 func _buy(id: String) -> void:
 	var uname: String = GameData.UNITS[id]["name"]
 	var cost: int = GameData.UNITS[id]["cost"]
 	if id in PEASANT_IDS:
-		if peasant_recruits <= 0:
-			info_text = "No more peasants will join this cycle."
+		if recruits_left <= 0:
+			info_text = "No recruit slots left this cycle."
 		else:
-			peasant_recruits -= 1
+			recruits_left -= 1
+			recruited_this_cycle.append(id)
 			army.append(id)
 			info_text = "%s joins your service (free)." % uname
 	elif id in SPECIALIST_IDS:
 		if not (id in contracts):
 			info_text = "Sign the %s guild's contract first." % uname
-		elif specialist_recruits <= 0:
-			info_text = "No more specialists will join this cycle."
+		elif recruits_left <= 0:
+			info_text = "No recruit slots left this cycle."
 		elif gold < cost:
 			info_text = "Not enough gold for %s." % uname
 		else:
 			gold -= cost
-			specialist_recruits -= 1
+			recruits_left -= 1
+			recruited_this_cycle.append(id)
 			army.append(id)
 			info_text = "%s enters your service." % uname
 	else:  # building / structure
@@ -1181,6 +1263,10 @@ func _rally() -> void:
 		info_text = "To arms! The peasants surge forward."
 
 func _process(delta: float) -> void:
+	if phase == Phase.DEPLOY or phase == Phase.BATTLE:
+		_update_hover()
+	elif hover_label.visible:
+		hover_label.visible = false
 	if phase == Phase.DEPLOY:
 		queue_redraw()   # keep the build grid live
 	if rally_time > 0.0:
