@@ -766,9 +766,22 @@ func _stat_row(label_text: String, value_text: String) -> HBoxContainer:
 	row.add_child(b)
 	return row
 
-func _guild_card(id: String) -> Control:
+func _unit_tooltip(id: String) -> String:
 	var d: Dictionary = GameData.UNITS[id]
 	var rng := float(d.get("range", 6))
+	var lines: Array = [str(d["name"]), "Health: %d" % int(d["hp"])]
+	if float(d.get("damage", 0)) > 0.0:
+		lines.append("Damage: %d" % int(d["damage"]))
+	lines.append("Atk speed: %.1f / s" % (1.0 / float(d.get("cooldown", 1.0))))
+	lines.append("Range: %s" % ("melee" if rng <= 12.0 else str(int(rng))))
+	if float(d.get("armor", 0)) > 0.0:
+		lines.append("Armor: %d" % int(d["armor"]))
+	if SPECIALTY.has(id):
+		lines.append(str(SPECIALTY[id]))
+	return "\n".join(lines)
+
+func _guild_card(id: String) -> Control:
+	var d: Dictionary = GameData.UNITS[id]
 	var pc := PanelContainer.new()
 	pc.add_theme_stylebox_override("panel", _card_style())
 	pc.custom_minimum_size = Vector2(224, 0)
@@ -785,20 +798,13 @@ func _guild_card(id: String) -> Control:
 	nm.add_theme_color_override("font_color", COL_INK)
 	nm.add_theme_font_size_override("font_size", 22)
 	nm.mouse_filter = Control.MOUSE_FILTER_STOP   # so the tooltip shows on hover
-	nm.tooltip_text = "Health: %d\nDamage: %d\nAtk speed: %.1f / s\nRange: %s\nCost: %dg" % [
-		int(d["hp"]), int(d["damage"]), 1.0 / float(d.get("cooldown", 1.0)),
-		"melee" if rng <= 12.0 else str(int(rng)), int(d["cost"])]
+	nm.tooltip_text = _unit_tooltip(id)
 	v.add_child(nm)
 	var sp := Label.new()
 	sp.text = str(SPECIALTY.get(id, ""))
 	sp.add_theme_color_override("font_color", COL_INK)
 	sp.add_theme_font_size_override("font_size", 14)
 	v.add_child(sp)
-	var hint := Label.new()
-	hint.text = "hover the name for stats"
-	hint.add_theme_color_override("font_color", COL_SOFT)
-	hint.add_theme_font_size_override("font_size", 10)
-	v.add_child(hint)
 	v.add_child(HSeparator.new())
 	var btn := Button.new()
 	btn.text = "Sign Contract"
@@ -919,6 +925,7 @@ func _build_shop_ui() -> void:
 	outer.add_child(rrow)
 	var pb := _menu_button("Peasant · free  (%d left)" % peasant_recruits, func(): _buy("peasant"))
 	pb.custom_minimum_size = Vector2(190, 30)
+	pb.tooltip_text = _unit_tooltip("peasant")
 	pb.disabled = peasant_recruits <= 0
 	rrow.add_child(pb)
 	if contracts.is_empty():
@@ -932,6 +939,7 @@ func _build_shop_ui() -> void:
 			var cost: int = GameData.UNITS[id]["cost"]
 			var b := _menu_button("%s · %dg  (%d)" % [GameData.UNITS[id]["name"], cost, specialist_recruits], func(): _buy(id))
 			b.custom_minimum_size = Vector2(190, 30)
+			b.tooltip_text = _unit_tooltip(id)
 			b.disabled = specialist_recruits <= 0 or gold < cost
 			rrow.add_child(b)
 
@@ -1028,6 +1036,7 @@ func _build_deploy_ui() -> void:
 		var cost: int = GameData.UNITS[id]["cost"]
 		var mark := " <" if _build_sel == id else ""
 		var b := _mk_button("%s — %dg%s" % [GameData.UNITS[id]["name"], cost, mark], Vector2(bx, by), Vector2(200, 28), func(): _set_build_sel(id))
+		b.tooltip_text = "%s\nHealth: %d  ·  Armor: %d\nBlocks enemies until destroyed." % [GameData.UNITS[id]["name"], int(GameData.UNITS[id]["hp"]), int(GameData.UNITS[id].get("armor", 0))]
 		b.disabled = gold < cost
 		by += 30
 	by += 8
