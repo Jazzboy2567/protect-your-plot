@@ -119,6 +119,7 @@ const SPEEDS := [1.0, 2.0, 3.0]
 var _press_pos: Vector2 = Vector2.ZERO
 var _dragging: bool = false
 var _sel_rect: Rect2 = Rect2()
+var _grab = null   # unit grabbed on mouse-down, for click-drag movement
 
 func _ready() -> void:
 	world = Node2D.new()
@@ -202,7 +203,7 @@ func _ready() -> void:
 	relic_dock.position = Vector2(ARENA.x - 46, 52)
 	hud.add_child(relic_dock)
 
-	buildings = [{"id": "castle", "gx": CASTLE_GX, "gy": CASTLE_GY}, {"id": "church", "gx": 1, "gy": 8}]
+	buildings = [{"id": "castle", "gx": CASTLE_GX, "gy": CASTLE_GY}, {"id": "church", "gx": 0, "gy": 8}]
 	show_shop()
 
 func is_fighting() -> bool:
@@ -382,7 +383,7 @@ func _restart() -> void:
 	dead_this_battle = []
 	total_fallen = 0
 	formation = []
-	buildings = [{"id": "castle", "gx": CASTLE_GX, "gy": CASTLE_GY}, {"id": "church", "gx": 1, "gy": 8}]
+	buildings = [{"id": "castle", "gx": CASTLE_GX, "gy": CASTLE_GY}, {"id": "church", "gx": 0, "gy": 8}]
 	_build_sel = ""
 	info_text = ""
 	show_shop()
@@ -491,7 +492,17 @@ func _spawn_enemies() -> void:
 func _make_unit(id: String, team: int) -> Unit:
 	var u := Unit.new()
 	u.setup(GameData.UNITS[id], team, self)
+	if u.is_structure:
+		var sp := _span(id)
+		u.foot_w = sp.x * TILE
+		u.foot_h = sp.y * TILE
+		u.radius = maxf(u.foot_w, u.foot_h) * 0.5   # collision/blocking spans the footprint
 	return u
+
+# Building footprint in tiles (defaults to 1x1 for anything without span keys).
+func _span(id: String) -> Vector2i:
+	var d: Dictionary = GameData.UNITS.get(id, {})
+	return Vector2i(int(d.get("span_x", 1)), int(d.get("span_y", 1)))
 
 func _spawn_buildings() -> void:
 	for b in buildings:
@@ -504,16 +515,13 @@ func _spawn_buildings() -> void:
 		peasants.append(u)
 
 func _building_center(b: Dictionary) -> Vector2:
-	if b["id"] == "castle":
-		return Vector2((b["gx"] + CASTLE_SPAN / 2.0) * TILE, (b["gy"] + CASTLE_SPAN / 2.0) * TILE)
-	return Vector2((b["gx"] + 0.5) * TILE, (b["gy"] + 0.5) * TILE)
+	var sp := _span(b["id"])
+	return Vector2((b["gx"] + sp.x / 2.0) * TILE, (b["gy"] + sp.y / 2.0) * TILE)
 
 func _tile_occupied(gx: int, gy: int) -> bool:
 	for b in buildings:
-		if b["id"] == "castle":
-			if gx >= b["gx"] and gx < b["gx"] + CASTLE_SPAN and gy >= b["gy"] and gy < b["gy"] + CASTLE_SPAN:
-				return true
-		elif b["gx"] == gx and b["gy"] == gy:
+		var sp := _span(b["id"])
+		if gx >= b["gx"] and gx < b["gx"] + sp.x and gy >= b["gy"] and gy < b["gy"] + sp.y:
 			return true
 	return false
 
@@ -524,16 +532,19 @@ func _has_building(id: String) -> bool:
 	return false
 
 func _place_building(pos: Vector2) -> void:
+	var sp := _span(_build_sel)
 	var gx := int(pos.x / TILE)
 	var gy := int(pos.y / TILE)
-	if gx < 0 or gx >= GRID_COLS or gy < 0 or gy >= GRID_ROWS:
+	if gx < 0 or gx + sp.x > GRID_COLS or gy < 0 or gy + sp.y > GRID_ROWS:
 		info_text = "Build on your own tiles (left side)."
 		_update_top()
 		return
-	if _tile_occupied(gx, gy):
-		info_text = "That tile is occupied."
-		_update_top()
-		return
+	for dx in sp.x:
+		for dy in sp.y:
+			if _tile_occupied(gx + dx, gy + dy):
+				info_text = "That space is occupied."
+				_update_top()
+				return
 	var cost: int = GameData.UNITS[_build_sel]["cost"]
 	if gold < cost:
 		info_text = "Not enough gold for that building."
@@ -679,19 +690,34 @@ func _unhandled_input(event: InputEvent) -> void:
 		if event.pressed:
 			_press_pos = event.position
 			_dragging = false
+			_grab = null
+			if _build_sel == "":
+				# Grabbing a unit lets you drag it (and its group) to a new spot.
+				var u = _peasant_at(event.position)
+				if u != null:
+					_grab = u
+					if not u.selected:
+						_clear_selection()
+						u.selected = true
+						u.queue_redraw()
 		else:
-			if _dragging:
+			if _build_sel != "":
+				_place_building(event.position)
+			elif _dragging and _grab != null:
+				_command_selected_to(event.position)   # drag-move the selected group
+			elif _dragging:
 				_select_in_rect(Rect2(_press_pos, event.position - _press_pos).abs())
-				_dragging = false
 				queue_redraw()
 			else:
-				_handle_click(event.position)
+				_handle_click(event.position)          # a plain click
+			_dragging = false
+			_grab = null
 	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
 		_command_selected_to(event.position)   # right-click also moves (desktop)
 	elif event is InputEventMouseMotion and (event.button_mask & MOUSE_BUTTON_MASK_LEFT):
 		if event.position.distance_to(_press_pos) > 8.0:
 			_dragging = true
-		if _dragging:
+		if _dragging and _grab == null and _build_sel == "":
 			_sel_rect = Rect2(_press_pos, event.position - _press_pos).abs()
 			queue_redraw()
 
