@@ -52,6 +52,7 @@ var slow_time: float = 0.0
 var _spread_cd: float = 0.0
 
 var command_point: Vector2 = Vector2.ZERO   # where you've ordered this unit to hold
+var _home := Vector2(INF, INF)               # structures lock here — nothing can shove them
 var selected: bool = false
 var target = null
 var _cd: float = 0.0
@@ -94,6 +95,13 @@ func setup(def: Dictionary, _team: int, _main) -> void:
 	_cd = randf() * attack_cooldown
 
 func _process(delta: float) -> void:
+	# Structures are immovable: pin them to where they were placed so no
+	# knockback or jostling can ever slide a wall/castle/church off its tiles.
+	if is_structure:
+		if _home == Vector2(INF, INF):
+			_home = global_position
+		elif global_position != _home:
+			global_position = _home
 	if _flash > 0.0:
 		_flash -= delta
 		queue_redraw()
