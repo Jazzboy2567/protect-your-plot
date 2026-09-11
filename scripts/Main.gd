@@ -21,6 +21,12 @@ const GUILD_NAMES := {
 	"herbalist": "Apothecary", "fisherman": "Wharf", "torchbearer": "Wharf",
 	"baker": "Bakers' Row", "monk": "Abbey",
 }
+const SPECIALTY := {
+	"archer": "Longest range", "woodcutter": "Pierces armor",
+	"hunter": "Double damage vs beasts", "herbalist": "Heals your units",
+	"fisherman": "Slows enemies on hit", "torchbearer": "Burns enemies on hit",
+	"baker": "Heal aura to nearby allies", "monk": "Attack-speed aura to nearby allies",
+}
 
 # ---- Key palette: black/dark ground, gold-orange accent, cream text ----
 const COL_PANEL := Color(0.11, 0.095, 0.065)
@@ -73,6 +79,7 @@ var rally_time: float = 0.0
 var relics: Array = []
 var contracts: Array = []      # specialist ids you've signed (max 4); only these are hireable
 var guild_offer: Array = []    # the specialist contracts on offer this interlude
+var shop_offer: Array = []     # the (few) relics on sale this interlude
 var peasant_recruits: int = RECRUIT_CAP
 var specialist_recruits: int = RECRUIT_CAP
 var dead_this_battle: Array = []
@@ -173,9 +180,18 @@ func show_shop() -> void:
 		peasant_recruits = RECRUIT_CAP
 		specialist_recruits = RECRUIT_CAP
 		guild_offer = _make_guild_offer()
+		shop_offer = _make_shop_offer()
 		open_guild()
 	else:
 		open_predeploy()
+
+func _make_shop_offer() -> Array:
+	var pool: Array = []
+	for id in RELIC_DEFS:
+		if not (id in relics):
+			pool.append(id)
+	pool.shuffle()
+	return pool.slice(0, mini(4, pool.size()))
 
 func is_interlude() -> bool:
 	return (battle_num - 1) % 4 == 0   # battles 1, 5, 9
@@ -191,7 +207,6 @@ func _make_guild_offer() -> Array:
 func open_guild() -> void:
 	phase = Phase.GUILD
 	_build_guild_ui()
-	flash_banner("A guild offers a contract!", Color(1, 0.85, 0.4))
 	_update_top()
 
 func open_shop() -> void:
@@ -290,6 +305,7 @@ func _restart() -> void:
 	relics = []
 	contracts = []
 	guild_offer = []
+	shop_offer = []
 	peasant_recruits = RECRUIT_CAP
 	specialist_recruits = RECRUIT_CAP
 	dead_this_battle = []
@@ -662,9 +678,9 @@ func _peasant_at(pos: Vector2):
 # ---------------------------------------------------------------- UI
 
 # A dark full-screen backdrop behind a modal (blocks the field, hides bleed-through).
-func _add_backdrop() -> void:
+func _add_backdrop(alpha: float = 0.62) -> void:
 	var bg := ColorRect.new()
-	bg.color = Color(0.06, 0.07, 0.05, 0.62)
+	bg.color = Color(0.05, 0.06, 0.04, alpha)
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	panel.add_child(bg)
 
@@ -752,11 +768,12 @@ func _stat_row(label_text: String, value_text: String) -> HBoxContainer:
 
 func _guild_card(id: String) -> Control:
 	var d: Dictionary = GameData.UNITS[id]
+	var rng := float(d.get("range", 6))
 	var pc := PanelContainer.new()
 	pc.add_theme_stylebox_override("panel", _card_style())
-	pc.custom_minimum_size = Vector2(214, 0)
+	pc.custom_minimum_size = Vector2(224, 0)
 	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 5)
+	v.add_theme_constant_override("separation", 6)
 	pc.add_child(v)
 	var gl := Label.new()
 	gl.text = str(GUILD_NAMES.get(id, "Guild")).to_upper()
@@ -766,16 +783,23 @@ func _guild_card(id: String) -> Control:
 	var nm := Label.new()
 	nm.text = d["name"]
 	nm.add_theme_color_override("font_color", COL_INK)
-	nm.add_theme_font_size_override("font_size", 20)
+	nm.add_theme_font_size_override("font_size", 22)
+	nm.mouse_filter = Control.MOUSE_FILTER_STOP   # so the tooltip shows on hover
+	nm.tooltip_text = "Health: %d\nDamage: %d\nAtk speed: %.1f / s\nRange: %s\nCost: %dg" % [
+		int(d["hp"]), int(d["damage"]), 1.0 / float(d.get("cooldown", 1.0)),
+		"melee" if rng <= 12.0 else str(int(rng)), int(d["cost"])]
 	v.add_child(nm)
-	var rng := float(d.get("range", 6))
-	v.add_child(_stat_row("Health", str(int(d["hp"]))))
-	v.add_child(_stat_row("Damage", str(int(d["damage"]))))
-	v.add_child(_stat_row("Atk speed", "%.1f / s" % (1.0 / float(d.get("cooldown", 1.0)))))
-	v.add_child(_stat_row("Range", "melee" if rng <= 12.0 else str(int(rng))))
-	v.add_child(_stat_row("Cost", "%dg" % int(d["cost"])))
-	var sep := HSeparator.new()
-	v.add_child(sep)
+	var sp := Label.new()
+	sp.text = str(SPECIALTY.get(id, ""))
+	sp.add_theme_color_override("font_color", COL_INK)
+	sp.add_theme_font_size_override("font_size", 14)
+	v.add_child(sp)
+	var hint := Label.new()
+	hint.text = "hover the name for stats"
+	hint.add_theme_color_override("font_color", COL_SOFT)
+	hint.add_theme_font_size_override("font_size", 10)
+	v.add_child(hint)
+	v.add_child(HSeparator.new())
 	var btn := Button.new()
 	btn.text = "Sign Contract"
 	btn.pressed.connect(func(): _sign_contract(id))
@@ -783,11 +807,33 @@ func _guild_card(id: String) -> Control:
 	v.add_child(btn)
 	return pc
 
+func _relic_card(id: String) -> Control:
+	var d: Dictionary = RELIC_DEFS[id]
+	var cost: int = int(d["cost"])
+	var pc := PanelContainer.new()
+	pc.add_theme_stylebox_override("panel", _card_style())
+	pc.custom_minimum_size = Vector2(236, 0)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 8)
+	pc.add_child(v)
+	var nm := Label.new()
+	nm.text = d["name"]
+	nm.add_theme_color_override("font_color", COL_INK)
+	nm.add_theme_font_size_override("font_size", 15)
+	nm.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	nm.custom_minimum_size = Vector2(208, 0)
+	v.add_child(nm)
+	var btn := _menu_button("Buy — %dg" % cost, func(): _buy_relic(id))
+	btn.custom_minimum_size = Vector2(208, 30)
+	btn.disabled = gold < cost
+	v.add_child(btn)
+	return pc
+
 # The Guild page: a centered modal — sign one free contract to unlock a specialist.
 func _build_guild_ui() -> void:
 	_clear_panel()
-	top_label.visible = false
-	_add_backdrop()
+	top_label.visible = true
+	_add_backdrop(0.45)   # keep the field faintly visible behind the modal
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -797,8 +843,8 @@ func _build_guild_ui() -> void:
 	center.add_child(col)
 
 	var head := Label.new()
-	head.text = "Guild Contract   ·   Choose one (free)   ·   Contracts %d/%d   ·   Gold %d" % [contracts.size(), MAX_CONTRACTS, gold]
-	head.add_theme_font_size_override("font_size", 22)
+	head.text = "Thanks for protecting the land!  Choose a guild to partner with and gain their services."
+	head.add_theme_font_size_override("font_size", 20)
 	head.add_theme_color_override("font_color", COL_GOLD)
 	head.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	head.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
@@ -827,65 +873,71 @@ func _build_guild_ui() -> void:
 # The Shop + Recruit page (interlude): a centered modal with two columns.
 func _build_shop_ui() -> void:
 	_clear_panel()
-	top_label.visible = false
-	_add_backdrop()
+	top_label.visible = true
+	_add_backdrop(0.9)   # solid overlay over the field
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.add_child(center)
+	var pc := PanelContainer.new()
+	pc.add_theme_stylebox_override("panel", _panel_style())
+	center.add_child(pc)
 	var outer := VBoxContainer.new()
 	outer.add_theme_constant_override("separation", 12)
-	center.add_child(outer)
+	pc.add_child(outer)
 
 	var head := Label.new()
-	head.text = "Shop & Recruit   ·   Gold %d   ·   Battle %d/%d" % [gold, battle_num, MAX_BATTLES]
+	head.text = "Shop & Recruit"
 	head.add_theme_font_size_override("font_size", 22)
 	head.add_theme_color_override("font_color", COL_GOLD)
 	head.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	outer.add_child(head)
 
-	var pc := PanelContainer.new()
-	pc.add_theme_stylebox_override("panel", _panel_style())
-	pc.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	outer.add_child(pc)
-	var cols := HBoxContainer.new()
-	cols.add_theme_constant_override("separation", 34)
-	pc.add_child(cols)
+	# --- Shop: a few relic cards ---
+	outer.add_child(_section_label("Shop — buy with gold"))
+	var srow := HBoxContainer.new()
+	srow.add_theme_constant_override("separation", 14)
+	srow.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	outer.add_child(srow)
+	var offered := 0
+	for id in shop_offer:
+		if id in relics:
+			continue
+		srow.add_child(_relic_card(id))
+		offered += 1
+	if offered == 0:
+		var sold := Label.new()
+		sold.text = "The merchant is sold out."
+		sold.add_theme_color_override("font_color", COL_SOFT)
+		srow.add_child(sold)
 
-	var rc := VBoxContainer.new()
-	rc.add_theme_constant_override("separation", 6)
-	cols.add_child(rc)
-	rc.add_child(_section_label("Recruit"))
-	var pb := _menu_button("Call Peasant (free) — %d left" % peasant_recruits, func(): _buy("peasant"))
+	# --- Recruit: peasant + contracted specialists ---
+	outer.add_child(_section_label("Recruit"))
+	var rrow := HBoxContainer.new()
+	rrow.add_theme_constant_override("separation", 10)
+	rrow.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	outer.add_child(rrow)
+	var pb := _menu_button("Peasant · free  (%d left)" % peasant_recruits, func(): _buy("peasant"))
+	pb.custom_minimum_size = Vector2(190, 30)
 	pb.disabled = peasant_recruits <= 0
-	rc.add_child(pb)
+	rrow.add_child(pb)
 	if contracts.is_empty():
 		var hint := Label.new()
 		hint.text = "Sign guild contracts to hire specialists."
 		hint.add_theme_color_override("font_color", COL_SOFT)
 		hint.add_theme_font_size_override("font_size", 13)
-		rc.add_child(hint)
+		rrow.add_child(hint)
 	else:
 		for id in contracts:
 			var cost: int = GameData.UNITS[id]["cost"]
-			var b := _menu_button("%s — %dg  (%d left)" % [GameData.UNITS[id]["name"], cost, specialist_recruits], func(): _buy(id))
+			var b := _menu_button("%s · %dg  (%d)" % [GameData.UNITS[id]["name"], cost, specialist_recruits], func(): _buy(id))
+			b.custom_minimum_size = Vector2(190, 30)
 			b.disabled = specialist_recruits <= 0 or gold < cost
-			rc.add_child(b)
+			rrow.add_child(b)
 
-	var sc := VBoxContainer.new()
-	sc.add_theme_constant_override("separation", 6)
-	cols.add_child(sc)
-	sc.add_child(_section_label("Shop"))
-	for id in RELIC_DEFS:
-		if id in relics:
-			continue
-		var d: Dictionary = RELIC_DEFS[id]
-		var b := _menu_button("%s — %dg" % [d["name"], int(d["cost"])], func(): _buy_relic(id))
-		b.disabled = gold < int(d["cost"])
-		sc.add_child(b)
-
+	outer.add_child(HSeparator.new())
 	var dep := _menu_button("Deploy for Battle %d  >>" % battle_num, start_deploy)
-	dep.custom_minimum_size = Vector2(280, 42)
+	dep.custom_minimum_size = Vector2(300, 44)
 	dep.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	outer.add_child(dep)
 
@@ -1136,10 +1188,6 @@ func _process(delta: float) -> void:
 
 func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, ARENA), Color(0.30, 0.42, 0.20))                       # field
-	# The battlefield (plot, crops, walls, grid) only shows during deploy & battle;
-	# the shop/guild screens draw their own modal over a plain ground.
-	if phase != Phase.DEPLOY and phase != Phase.BATTLE:
-		return
 	draw_rect(Rect2(Vector2.ZERO, Vector2(FENCE_X, ARENA.y)), Color(0.34, 0.40, 0.19))   # your tilled plot
 	draw_rect(Rect2(Vector2(900, 0), Vector2(252, ARENA.y)), Color(0.25, 0.28, 0.17))    # enemy approach
 
