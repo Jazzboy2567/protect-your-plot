@@ -16,6 +16,11 @@ const FENCE_X := 357.0
 const PEASANT_IDS := ["peasant"]
 const SPECIALIST_IDS := ["archer", "woodcutter", "hunter", "herbalist", "fisherman", "torchbearer", "baker", "monk"]
 const BUILDING_IDS := ["barricade", "spikes", "palisade", "stone_wall", "church"]
+const GUILD_NAMES := {
+	"archer": "Archers' Guild", "woodcutter": "Woodsmen", "hunter": "Hunters' Lodge",
+	"herbalist": "Apothecary", "fisherman": "Wharf", "torchbearer": "Wharf",
+	"baker": "Bakers' Row", "monk": "Abbey",
+}
 const RECRUIT_CAP := 3
 const MAX_CONTRACTS := 4
 
@@ -644,35 +649,120 @@ func _peasant_at(pos: Vector2):
 
 # ---------------------------------------------------------------- UI
 
-# The Guild page: sign one free contract to unlock hiring that specialist.
+# A dark full-screen backdrop behind a modal (blocks the field, hides bleed-through).
+func _add_backdrop() -> void:
+	var bg := ColorRect.new()
+	bg.color = Color(0.06, 0.07, 0.05, 0.62)
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	panel.add_child(bg)
+
+func _card_style() -> StyleBoxFlat:
+	var s := StyleBoxFlat.new()
+	s.bg_color = Color(0.95, 0.92, 0.83)
+	s.border_color = Color(0.70, 0.64, 0.47)
+	s.set_border_width_all(1)
+	s.set_corner_radius_all(5)
+	s.content_margin_left = 14
+	s.content_margin_right = 14
+	s.content_margin_top = 12
+	s.content_margin_bottom = 12
+	return s
+
+func _stat_row(label_text: String, value_text: String) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	var a := Label.new()
+	a.text = label_text
+	a.add_theme_color_override("font_color", Color(0.42, 0.39, 0.32))
+	a.add_theme_font_size_override("font_size", 13)
+	var sp := Control.new()
+	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var b := Label.new()
+	b.text = value_text
+	b.add_theme_color_override("font_color", Color(0.16, 0.14, 0.11))
+	b.add_theme_font_size_override("font_size", 13)
+	row.add_child(a)
+	row.add_child(sp)
+	row.add_child(b)
+	return row
+
+func _guild_card(id: String) -> Control:
+	var d: Dictionary = GameData.UNITS[id]
+	var pc := PanelContainer.new()
+	pc.add_theme_stylebox_override("panel", _card_style())
+	pc.custom_minimum_size = Vector2(214, 0)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 5)
+	pc.add_child(v)
+	var gl := Label.new()
+	gl.text = str(GUILD_NAMES.get(id, "Guild")).to_upper()
+	gl.add_theme_color_override("font_color", Color(0.62, 0.45, 0.10))
+	gl.add_theme_font_size_override("font_size", 11)
+	v.add_child(gl)
+	var nm := Label.new()
+	nm.text = d["name"]
+	nm.add_theme_color_override("font_color", Color(0.14, 0.12, 0.09))
+	nm.add_theme_font_size_override("font_size", 20)
+	v.add_child(nm)
+	var rng := float(d.get("range", 6))
+	v.add_child(_stat_row("Health", str(int(d["hp"]))))
+	v.add_child(_stat_row("Damage", str(int(d["damage"]))))
+	v.add_child(_stat_row("Atk speed", "%.1f / s" % (1.0 / float(d.get("cooldown", 1.0)))))
+	v.add_child(_stat_row("Range", "melee" if rng <= 12.0 else str(int(rng))))
+	v.add_child(_stat_row("Cost", "%dg" % int(d["cost"])))
+	var btn := Button.new()
+	btn.text = "Sign Contract"
+	btn.pressed.connect(func(): _sign_contract(id))
+	v.add_child(btn)
+	return pc
+
+# The Guild page: a centered modal — sign one free contract to unlock a specialist.
 func _build_guild_ui() -> void:
 	_clear_panel()
-	_shop_header("Guild Contract — sign one (free).  Contracts %d/%d" % [contracts.size(), MAX_CONTRACTS], 24, 60)
-	var x := 24.0
-	var y := 104.0
+	top_label.visible = false
+	_add_backdrop()
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(center)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 14)
+	center.add_child(col)
+
+	var head := Label.new()
+	head.text = "Guild Contract   ·   Choose one (free)   ·   Contracts %d/%d   ·   Gold %d" % [contracts.size(), MAX_CONTRACTS, gold]
+	head.add_theme_font_size_override("font_size", 22)
+	head.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	head.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	col.add_child(head)
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 16)
+	row.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	col.add_child(row)
 	if contracts.size() >= MAX_CONTRACTS or guild_offer.is_empty():
 		var l := Label.new()
-		l.text = "No new guilds are visiting." if contracts.size() < MAX_CONTRACTS else "All 4 contract slots are full."
-		l.position = Vector2(x, y)
-		l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		panel.add_child(l)
-		y += 36
+		l.text = "All contract slots are full." if contracts.size() >= MAX_CONTRACTS else "No guilds are visiting this round."
+		row.add_child(l)
 	else:
 		for id in guild_offer:
-			var d: Dictionary = GameData.UNITS[id]
-			var txt := "Sign %s  —  %d hp · %d dmg · range %d · hire for %dg" % [d["name"], int(d["hp"]), int(d["damage"]), int(d["range"]), int(d["cost"])]
-			_mk_button(txt, Vector2(x, y), Vector2(460, 30), func(): _sign_contract(id))
-			y += 34
-	y += 12
-	_mk_button("Continue to Shop  >>", Vector2(x, y), Vector2(240, 40), open_shop)
-	_build_roster_label()
+			row.add_child(_guild_card(id))
+
+	var cont := Button.new()
+	cont.text = "Continue to Shop  >>"
+	cont.custom_minimum_size = Vector2(240, 40)
+	cont.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	cont.pressed.connect(open_shop)
+	col.add_child(cont)
 
 # The Shop + Recruit page (interlude): recruit peasants, hire contracted
 # specialists, buy relics, then deploy.
 func _build_shop_ui() -> void:
 	_clear_panel()
+	top_label.visible = false
+	_add_backdrop()
+	_shop_header("Shop & Recruit  ·  Gold %d  ·  Battle %d/%d" % [gold, battle_num, MAX_BATTLES], 24, 20)
 	var x := 24.0
-	var y := 60.0
+	var y := 64.0
 	_shop_header("Recruit", x, y)
 	y += 32
 	var pb := _mk_button("Call Peasant (free) — %d left" % peasant_recruits, Vector2(x, y), Vector2(264, 26), func(): _buy("peasant"))
@@ -711,8 +801,10 @@ func _build_shop_ui() -> void:
 # Non-interlude rounds: no shopping — just deploy your standing force.
 func _build_predeploy_ui() -> void:
 	_clear_panel()
-	_shop_header("Battle %d — hold the line (recruiting returns every 4th battle)" % battle_num, 24, 60)
-	_mk_button("Deploy for Battle %d  >>" % battle_num, Vector2(24, 108), Vector2(264, 40), start_deploy)
+	top_label.visible = false
+	_add_backdrop()
+	_shop_header("Battle %d/%d  ·  Gold %d  —  hold the line (recruiting returns every 4th battle)" % [battle_num, MAX_BATTLES, gold], 24, 40)
+	_mk_button("Deploy for Battle %d  >>" % battle_num, Vector2(24, 92), Vector2(264, 40), start_deploy)
 	_build_roster_label()
 
 func _shop_header(text: String, x: float, y: float) -> void:
@@ -734,6 +826,7 @@ func _wave_summary(n: int) -> String:
 
 func _build_deploy_ui() -> void:
 	_clear_panel()
+	top_label.visible = true
 	var hint := Label.new()
 	hint.text = "DEPLOY — Move Units: drag a box to select, click a spot to send them (set up now; the battle then plays out).\nOr pick a building and click a tile on your side to place it. Walls block enemies until destroyed."
 	hint.position = Vector2(16, 44)
@@ -776,6 +869,7 @@ func _set_build_sel(id: String) -> void:
 
 func _build_battle_ui() -> void:
 	_clear_panel()
+	top_label.visible = true
 	rally_btn = _mk_button("Rally!", Vector2(16, 46), Vector2(130, 34), _rally)
 
 func _build_roster_label() -> void:
@@ -915,6 +1009,10 @@ func _process(delta: float) -> void:
 
 func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, ARENA), Color(0.30, 0.42, 0.20))                       # field
+	# The battlefield (plot, crops, walls, grid) only shows during deploy & battle;
+	# the shop/guild screens draw their own modal over a plain ground.
+	if phase != Phase.DEPLOY and phase != Phase.BATTLE:
+		return
 	draw_rect(Rect2(Vector2.ZERO, Vector2(FENCE_X, ARENA.y)), Color(0.34, 0.40, 0.19))   # your tilled plot
 	draw_rect(Rect2(Vector2(900, 0), Vector2(252, ARENA.y)), Color(0.25, 0.28, 0.17))    # enemy approach
 
