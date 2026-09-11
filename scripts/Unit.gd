@@ -4,7 +4,8 @@ extends Node2D
 # One combatant (peasant, enemy, or structure). Drawn as a stick figure in _draw().
 # Behaviour: find nearest enemy -> move into range (unless Hold) -> attack on cooldown.
 
-const ENGAGE_RADIUS := 120.0          # how far a unit chases from its command point
+const ENGAGE_RADIUS := 120.0          # how far a unit chases a foe that nears its post
+const AGGRO_RADIUS := 95.0            # a foe this close to the unit itself is engaged, wherever it strays
 
 var main = null                       # reference to Main (owns the unit arrays)
 var team: int = 0                     # 0 = peasant, 1 = enemy
@@ -217,11 +218,17 @@ func _movement_goal(has_t: bool, dist: float, reach: float):
 	# Enemies always advance on the nearest target.
 	if team == 1:
 		return target.global_position if (has_t and dist > reach) else null
-	# Your units hold their command point and engage foes that come near it.
+	# Already in striking range: stand and fight.
 	if has_t and dist <= reach:
 		return null
-	if has_t and dist > reach and target.global_position.distance_to(command_point) <= ENGAGE_RADIUS:
-		return target.global_position
+	# Otherwise hold the post, but rush any foe threatening my post OR standing
+	# next to me — so an enemy that breaches the line gets swarmed by every
+	# ally around it, not just the one whose post it happened to reach.
+	if has_t:
+		var near_post: bool = target.global_position.distance_to(command_point) <= ENGAGE_RADIUS
+		var near_me: bool = dist <= AGGRO_RADIUS
+		if near_post or near_me:
+			return target.global_position
 	if global_position.distance_to(command_point) > 8.0:
 		return command_point
 	return null
