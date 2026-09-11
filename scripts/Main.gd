@@ -4,7 +4,7 @@ extends Node2D
 # You are the landowner: hire with gold, deploy peasants (box-select + move),
 # then watch them auto-battle the incoming wave.
 
-enum Phase { SHOP, DEPLOY, BATTLE, GAMEOVER, WIN }
+enum Phase { SHOP, GUILD, DEPLOY, BATTLE, GAMEOVER, WIN }
 
 const ARENA := Vector2(1152, 648)
 const START_GOLD := 70
@@ -17,14 +17,15 @@ const PEASANT_IDS := ["peasant"]
 const SPECIALIST_IDS := ["archer", "woodcutter", "hunter", "herbalist", "fisherman", "torchbearer", "baker", "monk"]
 const BUILDING_IDS := ["barricade", "spikes", "palisade", "stone_wall", "church"]
 const RECRUIT_CAP := 3
+const MAX_CONTRACTS := 4
 
-# Tile grid over your (left) side. Buildings snap to tiles; the castle is 4x4.
+# Tile grid over your (left) side. Buildings snap to tiles; the castle is 3x3.
 const TILE := 36.0
 const GRID_COLS := 10
 const GRID_ROWS := 18
-const CASTLE_GX := 0
+const CASTLE_GX := 2
 const CASTLE_GY := 7
-const CASTLE_SPAN := 4
+const CASTLE_SPAN := 3
 
 # Run-wide passive upgrades (buy once, from the Traveling Merchant every 4th battle).
 const RELIC_DEFS := {
@@ -55,6 +56,8 @@ var rally_cd: float = 0.0
 var rally_time: float = 0.0
 
 var relics: Array = []
+var contracts: Array = []      # specialist ids you've signed (max 4); only these are hireable
+var guild_offer: Array = []    # the specialist contracts on offer this interlude
 var peasant_recruits: int = RECRUIT_CAP
 var specialist_recruits: int = RECRUIT_CAP
 var dead_this_battle: Array = []
@@ -122,7 +125,7 @@ func _ready() -> void:
 	ctrl_full.pressed.connect(_toggle_fullscreen)
 	hud.add_child(ctrl_full)
 
-	buildings = [{"id": "castle", "gx": CASTLE_GX, "gy": CASTLE_GY}, {"id": "church", "gx": 1, "gy": 12}]
+	buildings = [{"id": "castle", "gx": CASTLE_GX, "gy": CASTLE_GY}, {"id": "church", "gx": 1, "gy": 8}]
 	show_shop()
 
 func is_fighting() -> bool:
@@ -141,21 +144,55 @@ func _toggle_fullscreen() -> void:
 
 # ---------------------------------------------------------------- flow
 
+# Council entry point. Every 4th battle you get the Guild -> Shop interlude;
+# other rounds go straight to a light pre-deploy screen (no new recruits).
 func show_shop() -> void:
-	phase = Phase.SHOP
 	_despawn_all()
-	# Recruit allowances refill at the start of each 4-round cycle.
-	if battle_num % 4 == 1:
-		peasant_recruits = RECRUIT_CAP
-		specialist_recruits = RECRUIT_CAP
 	if army.is_empty():
 		army.append("peasant")
 		army.append("peasant")
 		info_text = "Your land lies empty — 2 peasants volunteer."
-	_build_shop_ui()
-	if battle_num % 4 == 0:
-		flash_banner("A traveling merchant has arrived!", Color(1, 0.85, 0.4))
+	if is_interlude():
+		peasant_recruits = RECRUIT_CAP
+		specialist_recruits = RECRUIT_CAP
+		guild_offer = _make_guild_offer()
+		open_guild()
+	else:
+		open_predeploy()
+
+func is_interlude() -> bool:
+	return (battle_num - 1) % 4 == 0   # battles 1, 5, 9
+
+func _make_guild_offer() -> Array:
+	var pool: Array = []
+	for id in SPECIALIST_IDS:
+		if not (id in contracts):
+			pool.append(id)
+	pool.shuffle()
+	return pool.slice(0, mini(3, pool.size()))
+
+func open_guild() -> void:
+	phase = Phase.GUILD
+	_build_guild_ui()
+	flash_banner("A guild offers a contract!", Color(1, 0.85, 0.4))
 	_update_top()
+
+func open_shop() -> void:
+	phase = Phase.SHOP
+	_build_shop_ui()
+	_update_top()
+
+func open_predeploy() -> void:
+	phase = Phase.SHOP
+	_build_predeploy_ui()
+	_update_top()
+
+func _sign_contract(id: String) -> void:
+	if contracts.size() < MAX_CONTRACTS and not (id in contracts):
+		contracts.append(id)
+		info_text = "Signed with the %s — you can now hire them." % GameData.UNITS[id]["name"]
+	guild_offer = []
+	open_shop()
 
 func start_deploy() -> void:
 	phase = Phase.DEPLOY
@@ -234,10 +271,12 @@ func _restart() -> void:
 	rally_cd = 0.0
 	rally_time = 0.0
 	relics = []
+	contracts = []
+	guild_offer = []
 	peasant_recruits = RECRUIT_CAP
 	specialist_recruits = RECRUIT_CAP
 	dead_this_battle = []
-	buildings = [{"id": "castle", "gx": CASTLE_GX, "gy": CASTLE_GY}, {"id": "church", "gx": 1, "gy": 12}]
+	buildings = [{"id": "castle", "gx": CASTLE_GX, "gy": CASTLE_GY}, {"id": "church", "gx": 1, "gy": 8}]
 	_build_sel = ""
 	info_text = ""
 	show_shop()
@@ -252,7 +291,7 @@ func _spawn_peasants() -> void:
 		var u := _make_unit(id, 0)
 		var col := fight_i / 8
 		var row := fight_i % 8
-		u.position = Vector2(150 + col * 36 + randf_range(-6, 6), 130 + row * 52 + randf_range(-8, 8))
+		u.position = Vector2(215 + col * 34 + randf_range(-6, 6), 120 + row * 52 + randf_range(-8, 8))
 		fight_i += 1
 		u.command_point = u.position
 		_apply_relics(u)
@@ -263,7 +302,7 @@ func _spawn_peasants() -> void:
 	if "full_granary" in relics:
 		for k in 2:
 			var f := _make_unit("peasant", 0)
-			f.position = Vector2(90 + randf_range(-6, 6), 220 + k * 50 + fight_i * 4)
+			f.position = Vector2(40 + randf_range(-6, 6), 300 + k * 50)
 			f.command_point = f.position
 			_apply_relics(f)
 			world.add_child(f)
@@ -605,44 +644,76 @@ func _peasant_at(pos: Vector2):
 
 # ---------------------------------------------------------------- UI
 
+# The Guild page: sign one free contract to unlock hiring that specialist.
+func _build_guild_ui() -> void:
+	_clear_panel()
+	_shop_header("Guild Contract — sign one (free).  Contracts %d/%d" % [contracts.size(), MAX_CONTRACTS], 24, 60)
+	var x := 24.0
+	var y := 104.0
+	if contracts.size() >= MAX_CONTRACTS or guild_offer.is_empty():
+		var l := Label.new()
+		l.text = "No new guilds are visiting." if contracts.size() < MAX_CONTRACTS else "All 4 contract slots are full."
+		l.position = Vector2(x, y)
+		l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		panel.add_child(l)
+		y += 36
+	else:
+		for id in guild_offer:
+			var d: Dictionary = GameData.UNITS[id]
+			var txt := "Sign %s  —  %d hp · %d dmg · range %d · hire for %dg" % [d["name"], int(d["hp"]), int(d["damage"]), int(d["range"]), int(d["cost"])]
+			_mk_button(txt, Vector2(x, y), Vector2(460, 30), func(): _sign_contract(id))
+			y += 34
+	y += 12
+	_mk_button("Continue to Shop  >>", Vector2(x, y), Vector2(240, 40), open_shop)
+	_build_roster_label()
+
+# The Shop + Recruit page (interlude): recruit peasants, hire contracted
+# specialists, buy relics, then deploy.
 func _build_shop_ui() -> void:
 	_clear_panel()
-
-	# ---- Left column: recruits (peasants free/capped, specialists paid/capped) ----
 	var x := 24.0
-	var y := 82.0
-	_shop_header("Peasants (free) — %d left" % peasant_recruits, x, y)
-	y += 30
-	for id in PEASANT_IDS:
-		var b := _mk_button("Call %s  (free)" % GameData.UNITS[id]["name"], Vector2(x, y), Vector2(232, 26), func(): _buy(id))
-		b.disabled = peasant_recruits <= 0
+	var y := 60.0
+	_shop_header("Recruit", x, y)
+	y += 32
+	var pb := _mk_button("Call Peasant (free) — %d left" % peasant_recruits, Vector2(x, y), Vector2(264, 26), func(): _buy("peasant"))
+	pb.disabled = peasant_recruits <= 0
+	y += 32
+	if contracts.is_empty():
+		var l := Label.new()
+		l.text = "Sign guild contracts to hire specialists."
+		l.position = Vector2(x, y)
+		l.add_theme_font_size_override("font_size", 13)
+		l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		panel.add_child(l)
 		y += 28
-	y += 8
-	_shop_header("Specialists (gold) — %d left" % specialist_recruits, x, y)
-	y += 30
-	for id in SPECIALIST_IDS:
-		var cost: int = GameData.UNITS[id]["cost"]
-		var b := _mk_button("%s — %dg" % [GameData.UNITS[id]["name"], cost], Vector2(x, y), Vector2(232, 26), func(): _buy(id))
-		b.disabled = specialist_recruits <= 0 or gold < cost
-		y += 28
-	y += 10
-	_mk_button("Deploy for Battle %d  >>" % battle_num, Vector2(x, y), Vector2(232, 38), start_deploy)
-
-	# ---- Right column: merchant relics every 4th battle, else roster ----
-	if battle_num % 4 == 0:
-		var rx := 560.0
-		var ry := 82.0
-		_shop_header("Traveling Merchant — Relics", rx, ry)
-		ry += 30
-		for id in RELIC_DEFS:
-			if id in relics:
-				continue
-			var d: Dictionary = RELIC_DEFS[id]
-			var b := _mk_button("%s — %dg" % [d["name"], d["cost"]], Vector2(rx, ry), Vector2(310, 24), func(): _buy_relic(id))
-			b.disabled = gold < int(d["cost"])
-			ry += 26
 	else:
-		_build_roster_label()
+		for id in contracts:
+			var cost: int = GameData.UNITS[id]["cost"]
+			var b := _mk_button("%s — %dg  (%d left)" % [GameData.UNITS[id]["name"], cost, specialist_recruits], Vector2(x, y), Vector2(264, 26), func(): _buy(id))
+			b.disabled = specialist_recruits <= 0 or gold < cost
+			y += 28
+	y += 14
+	_mk_button("Deploy for Battle %d  >>" % battle_num, Vector2(x, y), Vector2(264, 40), start_deploy)
+
+	# Relic shop on the right.
+	var rx := 340.0
+	var ry := 60.0
+	_shop_header("Shop", rx, ry)
+	ry += 32
+	for id in RELIC_DEFS:
+		if id in relics:
+			continue
+		var d: Dictionary = RELIC_DEFS[id]
+		var b := _mk_button("%s — %dg" % [d["name"], d["cost"]], Vector2(rx, ry), Vector2(340, 24), func(): _buy_relic(id))
+		b.disabled = gold < int(d["cost"])
+		ry += 26
+
+# Non-interlude rounds: no shopping — just deploy your standing force.
+func _build_predeploy_ui() -> void:
+	_clear_panel()
+	_shop_header("Battle %d — hold the line (recruiting returns every 4th battle)" % battle_num, 24, 60)
+	_mk_button("Deploy for Battle %d  >>" % battle_num, Vector2(24, 108), Vector2(264, 40), start_deploy)
+	_build_roster_label()
 
 func _shop_header(text: String, x: float, y: float) -> void:
 	var l := Label.new()
@@ -664,7 +735,7 @@ func _wave_summary(n: int) -> String:
 func _build_deploy_ui() -> void:
 	_clear_panel()
 	var hint := Label.new()
-	hint.text = "DEPLOY — Move Units: drag a box to select, click a spot to send them (works mid-battle too).\nOr pick a building and click a tile on your side to place it. Walls block enemies until destroyed."
+	hint.text = "DEPLOY — Move Units: drag a box to select, click a spot to send them (set up now; the battle then plays out).\nOr pick a building and click a tile on your side to place it. Walls block enemies until destroyed."
 	hint.position = Vector2(16, 44)
 	hint.add_theme_font_size_override("font_size", 14)
 	hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -787,7 +858,9 @@ func _buy(id: String) -> void:
 			army.append(id)
 			info_text = "%s joins your service (free)." % uname
 	elif id in SPECIALIST_IDS:
-		if specialist_recruits <= 0:
+		if not (id in contracts):
+			info_text = "Sign the %s guild's contract first." % uname
+		elif specialist_recruits <= 0:
 			info_text = "No more specialists will join this cycle."
 		elif gold < cost:
 			info_text = "Not enough gold for %s." % uname
