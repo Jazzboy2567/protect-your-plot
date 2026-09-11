@@ -18,6 +18,8 @@ var attack_cooldown: float = 1.0
 var move_speed: float = 55.0
 var radius: float = 7.0
 var is_structure: bool = false
+var foot_w: float = 0.0                # footprint px width (structures); 0 => square of radius*2
+var foot_h: float = 0.0                # footprint px height
 var body_color: Color = Color(0.78, 0.80, 0.85)
 var gold_drop: int = 0
 var armor: float = 0.0                 # flat damage reduction (min 1 damage taken)
@@ -272,12 +274,13 @@ func die() -> void:
 func _draw() -> void:
 	# HP bar — only while damaged, so full-health units/buildings stay clean.
 	if hp < max_hp and not invulnerable:
-		var w := radius * 2.0
+		var w: float = foot_w if (is_structure and foot_w > 0.0) else radius * 2.0
+		var half_h: float = (foot_h * 0.5) if (is_structure and foot_h > 0.0) else radius
 		var frac := clampf(hp / max_hp, 0.0, 1.0)
-		var bar_y := -radius - 9.0
-		draw_rect(Rect2(-radius, bar_y, w, 3.0), Color(0, 0, 0, 0.5))
+		var bar_y := -half_h - 9.0
+		draw_rect(Rect2(-w * 0.5, bar_y, w, 3.0), Color(0, 0, 0, 0.5))
 		var bar_col := Color(0.25, 0.9, 0.3) if team == 0 else Color(0.9, 0.3, 0.2)
-		draw_rect(Rect2(-radius, bar_y, w * frac, 3.0), bar_col)
+		draw_rect(Rect2(-w * 0.5, bar_y, w * frac, 3.0), bar_col)
 
 	# Hit flash: briefly wash the body toward white when struck.
 	var c := body_color
@@ -287,8 +290,11 @@ func _draw() -> void:
 		c = body_color.lerp(Color(0.3, 0.8, 0.2), 0.5)   # sickly green when infected
 
 	if is_structure:
-		draw_rect(Rect2(-radius, -radius, radius * 2.0, radius * 2.0), c)
-		draw_rect(Rect2(-radius, -radius, radius * 2.0, radius * 2.0), Color(0.25, 0.16, 0.08), false, 2.0)
+		var w: float = foot_w if foot_w > 0.0 else radius * 2.0
+		var h: float = foot_h if foot_h > 0.0 else radius * 2.0
+		var rect := Rect2(-w * 0.5, -h * 0.5, w, h)
+		draw_rect(rect, c)
+		draw_rect(rect, Color(0.25, 0.16, 0.08), false, 2.0)
 		return
 
 	# Stick figure
