@@ -15,7 +15,7 @@ const FENCE_X := 357.0
 # Peasants join free (capped); specialists cost gold (capped); buildings cost gold.
 const PEASANT_IDS := ["peasant"]
 const SPECIALIST_IDS := ["archer", "woodcutter", "hunter", "herbalist", "fisherman", "torchbearer", "baker", "monk"]
-const BUILDING_IDS := ["barricade", "spikes", "palisade", "stone_wall", "church"]
+const BUILDING_IDS := ["barricade", "spikes", "palisade", "stone_wall"]
 const GUILD_NAMES := {
 	"archer": "Archers' Guild", "woodcutter": "Woodsmen", "hunter": "Hunters' Lodge",
 	"herbalist": "Apothecary", "fisherman": "Wharf", "torchbearer": "Wharf",
@@ -50,20 +50,20 @@ const CASTLE_SPAN := 3
 
 # Run-wide passive upgrades (buy once, from the Traveling Merchant every 4th battle).
 const RELIC_DEFS := {
-	"sharp_tools":      {"name": "Sharpened Tools (+25% dmg)", "cost": 60},
-	"village_bell":     {"name": "Village Bell (+20% atk spd)", "cost": 60},
-	"blacksmith_forge": {"name": "Blacksmith's Forge (+3 armor)", "cost": 55},
-	"full_granary":     {"name": "Full Granary (+2 free peasants)", "cost": 50},
-	"fortifier":        {"name": "Fortifier (walls +80% HP)", "cost": 45},
-	"longbows":         {"name": "Longbows (archers +range/dmg)", "cost": 45},
-	"shields":          {"name": "Shields (peasants +2 armor)", "cost": 40},
-	"sharpened_axes":   {"name": "Sharpened Axes (woodcutter +8)", "cost": 40},
-	"keen_edge":        {"name": "Keen Edge (+15% crit)", "cost": 55},
-	"warhorn":          {"name": "War Horn (+15% atk speed)", "cost": 50},
-	"swift_boots":      {"name": "Swift Boots (+20% move speed)", "cost": 40},
-	"iron_rations":     {"name": "Iron Rations (+25% max HP)", "cost": 50},
-	"hawk_eye":         {"name": "Hawk Eye (ranged +30 range)", "cost": 45},
-	"berserkers_brew":  {"name": "Berserker's Brew (+40% dmg, -15% HP)", "cost": 55},
+	"sharp_tools":      {"name": "Sharpened Tools", "cost": 60, "effect": "+25% damage"},
+	"village_bell":     {"name": "Village Bell", "cost": 60, "effect": "+20% attack speed"},
+	"blacksmith_forge": {"name": "Blacksmith's Forge", "cost": 55, "effect": "+3 armor"},
+	"full_granary":     {"name": "Full Granary", "cost": 50, "effect": "+2 free peasants each battle"},
+	"fortifier":        {"name": "Fortifier", "cost": 45, "effect": "Walls +80% HP"},
+	"longbows":         {"name": "Longbows", "cost": 45, "effect": "Archer range +40, damage +3"},
+	"shields":          {"name": "Shields", "cost": 40, "effect": "Peasant armor +2"},
+	"sharpened_axes":   {"name": "Sharpened Axes", "cost": 40, "effect": "Woodcutter damage +8"},
+	"keen_edge":        {"name": "Keen Edge", "cost": 55, "effect": "+15% crit chance"},
+	"warhorn":          {"name": "War Horn", "cost": 50, "effect": "+15% attack speed"},
+	"swift_boots":      {"name": "Swift Boots", "cost": 40, "effect": "+20% move speed"},
+	"iron_rations":     {"name": "Iron Rations", "cost": 50, "effect": "+25% max HP"},
+	"hawk_eye":         {"name": "Hawk Eye", "cost": 45, "effect": "Ranged range +30"},
+	"berserkers_brew":  {"name": "Berserker's Brew", "cost": 55, "effect": "+40% damage, -15% HP"},
 }
 # Who each relic buffs (shown as a category tag on the item).
 const RELIC_SCOPE := {
@@ -288,7 +288,7 @@ func _win_battle() -> void:
 	if _has_building("church") and not dead_this_battle.is_empty():
 		var revived: String = dead_this_battle[0]
 		army.append(revived)
-		info_text += "  The church revives a %s." % GameData.UNITS[revived]["name"]
+		flash_banner("The church revives a %s." % GameData.UNITS[revived]["name"], Color(0.8, 0.9, 1))
 
 	battle_num += 1
 	if battle_num > MAX_BATTLES:
@@ -343,29 +343,23 @@ func _restart() -> void:
 # ---------------------------------------------------------------- spawning
 
 func _spawn_peasants() -> void:
-	var fight_i := 0
+	var ids: Array = []
 	for id in army:
-		if GameData.UNITS[id].get("structure", false):
-			continue   # structures are placed on tiles, not spawned from the roster
-		var u := _make_unit(id, 0)
-		var col := fight_i / 8
-		var row := fight_i % 8
-		u.position = Vector2(215 + col * 34 + randf_range(-6, 6), 120 + row * 52 + randf_range(-8, 8))
-		fight_i += 1
+		if not GameData.UNITS[id].get("structure", false):
+			ids.append(id)   # structures are placed on tiles, not spawned from the roster
+	if "full_granary" in relics:
+		ids.append("peasant")
+		ids.append("peasant")
+	var max_gx := int((FENCE_X - 1.0) / TILE)
+	var tiles := _tiles_around(6, 3, ids.size(), max_gx)
+	for i in ids.size():
+		var u := _make_unit(ids[i], 0)
+		var t: Vector2i = tiles[i] if i < tiles.size() else Vector2i(6, 3)
+		u.position = Vector2((t.x + 0.5) * TILE, (t.y + 0.5) * TILE)
 		u.command_point = u.position
 		_apply_relics(u)
 		world.add_child(u)
 		peasants.append(u)
-
-	# Full Granary relic: extra free peasants each deploy.
-	if "full_granary" in relics:
-		for k in 2:
-			var f := _make_unit("peasant", 0)
-			f.position = Vector2(40 + randf_range(-6, 6), 300 + k * 50)
-			f.command_point = f.position
-			_apply_relics(f)
-			world.add_child(f)
-			peasants.append(f)
 
 func _apply_relics(u: Unit) -> void:
 	for r in relics:
@@ -651,21 +645,38 @@ func _command_selected_to(pos: Vector2) -> void:
 			sel.append(p)
 	if sel.is_empty():
 		return
-	var cp := pos
-	# During deploy, keep units on your own side; they may advance once fighting.
-	var max_x := (FENCE_X - 12.0) if phase == Phase.DEPLOY else 880.0
-	cp.x = clampf(cp.x, 24.0, max_x)
-	cp.y = clampf(cp.y, 24.0, ARENA.y - 20.0)
-	var i := 0
-	for p in sel:
-		var ox := float((i % 6) * 22 - 55)
-		var oy := float((i / 6) * 22)
-		var pt := cp + Vector2(ox, oy)
-		p.command_point = pt
+	# Snap the target to a grid tile and give each selected unit its own tile.
+	var max_gx := int((FENCE_X - 1.0) / TILE) if phase == Phase.DEPLOY else GRID_COLS + 14
+	var gx := clampi(int(pos.x / TILE), 0, max_gx)
+	var gy := clampi(int(pos.y / TILE), 0, GRID_ROWS - 1)
+	var tiles := _tiles_around(gx, gy, sel.size(), max_gx)
+	for i in mini(sel.size(), tiles.size()):
+		var t: Vector2i = tiles[i]
+		var cp := Vector2((t.x + 0.5) * TILE, (t.y + 0.5) * TILE)
+		sel[i].command_point = cp
 		if phase == Phase.DEPLOY:
-			p.global_position = pt
-		p.queue_redraw()
-		i += 1
+			sel[i].global_position = cp
+		sel[i].queue_redraw()
+
+func _tiles_around(gx: int, gy: int, count: int, max_gx: int) -> Array:
+	var res: Array = []
+	var r := 0
+	while res.size() < count and r < 40:
+		for dy in range(-r, r + 1):
+			for dx in range(-r, r + 1):
+				if absi(dx) != r and absi(dy) != r:
+					continue   # only the outer ring at radius r
+				var tx := gx + dx
+				var ty := gy + dy
+				if tx < 0 or tx > max_gx or ty < 0 or ty >= GRID_ROWS:
+					continue
+				if _tile_occupied(tx, ty):
+					continue   # skip building footprints
+				res.append(Vector2i(tx, ty))
+				if res.size() >= count:
+					return res
+		r += 1
+	return res
 
 func _select_in_rect(r: Rect2) -> void:
 	# A tiny rect (a stray click read as a drag) selects nothing extra.
@@ -768,6 +779,27 @@ func _menu_button(text: String, cb: Callable) -> Button:
 	_style_button(b)
 	return b
 
+# Green primary-action styling (for the big Deploy / Fight button).
+func _style_green_button(b: Button) -> void:
+	var n := StyleBoxFlat.new()
+	n.bg_color = Color(0.28, 0.42, 0.16)
+	n.border_color = Color(0.52, 0.74, 0.32)
+	n.set_border_width_all(1)
+	n.set_corner_radius_all(5)
+	n.content_margin_left = 12
+	n.content_margin_right = 12
+	n.content_margin_top = 8
+	n.content_margin_bottom = 8
+	var h: StyleBoxFlat = n.duplicate()
+	h.bg_color = Color(0.37, 0.54, 0.21)
+	b.add_theme_stylebox_override("normal", n)
+	b.add_theme_stylebox_override("hover", h)
+	b.add_theme_stylebox_override("pressed", h)
+	b.add_theme_stylebox_override("focus", h)
+	b.add_theme_color_override("font_color", Color(0.96, 1.0, 0.90))
+	b.add_theme_color_override("font_hover_color", Color(1, 1, 1))
+	b.add_theme_font_size_override("font_size", 18)
+
 func _section_label(text: String) -> Label:
 	var l := Label.new()
 	l.text = text
@@ -811,6 +843,9 @@ func _guild_card(id: String) -> Control:
 	var pc := PanelContainer.new()
 	pc.add_theme_stylebox_override("panel", _card_style())
 	pc.custom_minimum_size = Vector2(224, 0)
+	pc.mouse_filter = Control.MOUSE_FILTER_PASS
+	pc.mouse_entered.connect(func(): _show_hover(_unit_tooltip(id)))
+	pc.mouse_exited.connect(_hide_hover)
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 6)
 	pc.add_child(v)
@@ -823,8 +858,6 @@ func _guild_card(id: String) -> Control:
 	nm.text = d["name"]
 	nm.add_theme_color_override("font_color", COL_INK)
 	nm.add_theme_font_size_override("font_size", 22)
-	nm.mouse_filter = Control.MOUSE_FILTER_STOP   # so the tooltip shows on hover
-	nm.tooltip_text = _unit_tooltip(id)
 	v.add_child(nm)
 	var sp := Label.new()
 	sp.text = str(SPECIALTY.get(id, ""))
@@ -842,26 +875,48 @@ func _guild_card(id: String) -> Control:
 func _relic_card(id: String) -> Control:
 	var d: Dictionary = RELIC_DEFS[id]
 	var cost: int = int(d["cost"])
+	var eff: String = str(d.get("effect", ""))
+	var scope_name: String = str(RELIC_SCOPE.get(id, "Everyone"))
 	var pc := PanelContainer.new()
 	pc.add_theme_stylebox_override("panel", _card_style())
-	pc.custom_minimum_size = Vector2(236, 0)
+	pc.custom_minimum_size = Vector2(240, 168)   # fixed height so all cards align
+	pc.mouse_filter = Control.MOUSE_FILTER_PASS
+	pc.mouse_entered.connect(func(): _show_hover("%s\n%s\nAffects: %s" % [d["name"], eff, scope_name]))
+	pc.mouse_exited.connect(_hide_hover)
 	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 8)
+	v.add_theme_constant_override("separation", 6)
 	pc.add_child(v)
+
 	var nm := Label.new()
 	nm.text = d["name"]
 	nm.add_theme_color_override("font_color", COL_INK)
-	nm.add_theme_font_size_override("font_size", 15)
+	nm.add_theme_font_size_override("font_size", 16)
 	nm.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	nm.custom_minimum_size = Vector2(208, 0)
+	nm.custom_minimum_size = Vector2(212, 0)
 	v.add_child(nm)
+
+	var el := Label.new()
+	el.text = eff
+	el.add_theme_color_override("font_color", COL_SOFT)
+	el.add_theme_font_size_override("font_size", 13)
+	el.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	el.custom_minimum_size = Vector2(212, 0)
+	v.add_child(el)
+
+	var spacer := Control.new()
+	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	v.add_child(spacer)
+
 	var scope := Label.new()
-	scope.text = str(RELIC_SCOPE.get(id, "Everyone")).to_upper()
+	scope.text = scope_name.to_upper()
 	scope.add_theme_color_override("font_color", COL_GOLD)
 	scope.add_theme_font_size_override("font_size", 11)
+	scope.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(scope)
+
 	var btn := _menu_button("Buy — %dg" % cost, func(): _buy_relic(id))
-	btn.custom_minimum_size = Vector2(208, 30)
+	btn.custom_minimum_size = Vector2(200, 30)
+	btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	btn.disabled = gold < cost
 	v.add_child(btn)
 	return pc
@@ -955,19 +1010,28 @@ func _build_shop_ui() -> void:
 	slots.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	outer.add_child(slots)
 	for i in RECRUIT_CAP:
-		var slot := PanelContainer.new()
-		slot.add_theme_stylebox_override("panel", _card_style())
-		slot.custom_minimum_size = Vector2(150, 40)
-		var sl := Label.new()
-		sl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		if i < recruited_this_cycle.size():
-			sl.text = GameData.UNITS[recruited_this_cycle[i]]["name"]
-			sl.add_theme_color_override("font_color", COL_INK)
+			var uid: String = recruited_this_cycle[i]
+			var idx := i
+			var sb := Button.new()
+			sb.text = GameData.UNITS[uid]["name"] + "   ✕"
+			sb.custom_minimum_size = Vector2(154, 40)
+			sb.tooltip_text = "Click to remove"
+			_style_button(sb)
+			sb.pressed.connect(func(): _unrecruit(idx))
+			sb.mouse_entered.connect(func(): _show_hover(_unit_tooltip(uid)))
+			sb.mouse_exited.connect(_hide_hover)
+			slots.add_child(sb)
 		else:
+			var slot := PanelContainer.new()
+			slot.add_theme_stylebox_override("panel", _card_style())
+			slot.custom_minimum_size = Vector2(154, 40)
+			var sl := Label.new()
 			sl.text = "— empty —"
+			sl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 			sl.add_theme_color_override("font_color", COL_SOFT)
-		slot.add_child(sl)
-		slots.add_child(slot)
+			slot.add_child(sl)
+			slots.add_child(slot)
 
 	# Palette of units you can drop into a slot.
 	var pal := HBoxContainer.new()
@@ -976,7 +1040,8 @@ func _build_shop_ui() -> void:
 	outer.add_child(pal)
 	var pb := _menu_button("Peasant · free", func(): _buy("peasant"))
 	pb.custom_minimum_size = Vector2(170, 30)
-	pb.tooltip_text = _unit_tooltip("peasant")
+	pb.mouse_entered.connect(func(): _show_hover(_unit_tooltip("peasant")))
+	pb.mouse_exited.connect(_hide_hover)
 	pb.disabled = recruits_left <= 0
 	pal.add_child(pb)
 	if contracts.is_empty():
@@ -990,58 +1055,44 @@ func _build_shop_ui() -> void:
 			var cost: int = GameData.UNITS[id]["cost"]
 			var b := _menu_button("%s · %dg" % [GameData.UNITS[id]["name"], cost], func(): _buy(id))
 			b.custom_minimum_size = Vector2(170, 30)
-			b.tooltip_text = _unit_tooltip(id)
+			b.mouse_entered.connect(func(): _show_hover(_unit_tooltip(id)))
+			b.mouse_exited.connect(_hide_hover)
 			b.disabled = recruits_left <= 0 or gold < cost
 			pal.add_child(b)
 
 	outer.add_child(HSeparator.new())
 	var dep := _menu_button("Deploy for Battle %d  >>" % battle_num, start_deploy)
-	dep.custom_minimum_size = Vector2(300, 44)
+	dep.custom_minimum_size = Vector2(300, 46)
 	dep.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_style_green_button(dep)
 	outer.add_child(dep)
 
-# Non-interlude rounds: a small centered modal — just deploy your standing force.
+# Non-interlude rounds: a roster on the left, a big green Deploy at bottom-right.
 func _build_predeploy_ui() -> void:
 	_clear_panel()
 	top_label.visible = false
-	_add_backdrop()
-	var center := CenterContainer.new()
-	center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.add_child(center)
-	var col := VBoxContainer.new()
-	col.add_theme_constant_override("separation", 12)
-	center.add_child(col)
+	_add_backdrop(0.5)
+	_shop_header("Battle %d/%d   ·   Gold %d" % [battle_num, MAX_BATTLES, gold], 24, 20)
 
-	var head := Label.new()
-	head.text = "Battle %d/%d   ·   Gold %d" % [battle_num, MAX_BATTLES, gold]
-	head.add_theme_font_size_override("font_size", 22)
-	head.add_theme_color_override("font_color", COL_GOLD)
-	head.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	col.add_child(head)
-
-	var sub := Label.new()
-	sub.text = "Hold the line — recruiting returns every 4th battle."
-	sub.add_theme_color_override("font_color", COL_SOFT)
-	sub.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	col.add_child(sub)
-
+	# Roster list on the left (units only — buildings aren't "forces").
 	var comp := {}
 	for id in army:
+		if GameData.UNITS[id].get("structure", false):
+			continue
 		comp[id] = int(comp.get(id, 0)) + 1
-	var parts: Array = []
+	var y := 66.0
 	for id in comp:
-		parts.append("%d %s" % [comp[id], GameData.UNITS[id]["name"]])
-	var rl := Label.new()
-	rl.text = "Your forces:  " + ", ".join(parts)
-	rl.add_theme_color_override("font_color", COL_INK)
-	rl.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	col.add_child(rl)
+		var l := Label.new()
+		l.text = "%d  ·  %s" % [comp[id], GameData.UNITS[id]["name"]]
+		l.position = Vector2(28, y)
+		l.add_theme_color_override("font_color", COL_INK)
+		l.add_theme_font_size_override("font_size", 17)
+		l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		panel.add_child(l)
+		y += 30
 
-	var dep := _menu_button("Deploy for Battle %d  >>" % battle_num, start_deploy)
-	dep.custom_minimum_size = Vector2(280, 42)
-	dep.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	col.add_child(dep)
+	var dep := _mk_button("Deploy for Battle %d  >>" % battle_num, Vector2(ARENA.x - 350, ARENA.y - 92), Vector2(320, 58), start_deploy)
+	_style_green_button(dep)
 
 func _shop_header(text: String, x: float, y: float) -> void:
 	var l := Label.new()
@@ -1064,34 +1115,33 @@ func _wave_summary(n: int) -> String:
 func _build_deploy_ui() -> void:
 	_clear_panel()
 	top_label.visible = true
-	var hint := Label.new()
-	hint.text = "DEPLOY — Move Units: drag a box to select, click a spot to send them (set up now; the battle then plays out).\nOr pick a building and click a tile on your side to place it. Walls block enemies until destroyed."
-	hint.position = Vector2(16, 44)
-	hint.add_theme_font_size_override("font_size", 14)
-	hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.add_child(hint)
 
+	# Wave banner, top centre.
 	var tele := Label.new()
-	tele.text = "Incoming wave:  " + _wave_summary(battle_num)
-	tele.position = Vector2(392, 12)
-	tele.add_theme_font_size_override("font_size", 14)
+	tele.text = "Incoming:  " + _wave_summary(battle_num)
+	tele.position = Vector2(ARENA.x * 0.32, 12)
+	tele.add_theme_font_size_override("font_size", 15)
+	tele.add_theme_color_override("font_color", COL_INK)
 	tele.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.add_child(tele)
 
+	# Building toolbar along the bottom-left (out of the way of unit selection).
+	var names := {"barricade": "Barricade", "spikes": "Spikes", "palisade": "Palisade", "stone_wall": "Stone Wall"}
 	var bx := 16.0
-	var by := 82.0
-	var mv := _mk_button("Move Units" + (" <" if _build_sel == "" else ""), Vector2(bx, by), Vector2(200, 28), func(): _set_build_sel(""))
+	var byy := ARENA.y - 50.0
+	var mv := _mk_button("Move Units" + ("  ◂" if _build_sel == "" else ""), Vector2(bx, byy), Vector2(126, 36), func(): _set_build_sel(""))
 	mv.disabled = _build_sel == ""
-	by += 32
+	bx += 132
 	for id in BUILDING_IDS:
 		var cost: int = GameData.UNITS[id]["cost"]
-		var mark := " <" if _build_sel == id else ""
-		var b := _mk_button("%s — %dg%s" % [GameData.UNITS[id]["name"], cost, mark], Vector2(bx, by), Vector2(200, 28), func(): _set_build_sel(id))
+		var mark := "  ◂" if _build_sel == id else ""
+		var b := _mk_button("%s %dg%s" % [names[id], cost, mark], Vector2(bx, byy), Vector2(140, 36), func(): _set_build_sel(id))
 		b.tooltip_text = "%s\nHealth: %d  ·  Armor: %d\nBlocks enemies until destroyed." % [GameData.UNITS[id]["name"], int(GameData.UNITS[id]["hp"]), int(GameData.UNITS[id].get("armor", 0))]
 		b.disabled = gold < cost
-		by += 30
-	by += 8
-	_mk_button("Fight!  >>", Vector2(bx, by), Vector2(200, 40), begin_fight)
+		bx += 146
+
+	var fb := _mk_button("Fight!  >>", Vector2(ARENA.x - 320, ARENA.y - 108), Vector2(300, 52), begin_fight)
+	_style_green_button(fb)
 	_build_roster_label()
 	queue_redraw()
 
@@ -1099,9 +1149,6 @@ func _set_build_sel(id: String) -> void:
 	_build_sel = id
 	if id != "":
 		_clear_selection()
-		info_text = "Placing %s — click a tile on your side." % GameData.UNITS[id]["name"]
-	else:
-		info_text = "Move mode — drag to select units, click to move them."
 	_build_deploy_ui()
 	_update_top()
 
@@ -1113,18 +1160,17 @@ func _build_battle_ui() -> void:
 func _build_roster_label() -> void:
 	var comp := {}
 	for id in army:
+		if GameData.UNITS[id].get("structure", false):
+			continue   # buildings aren't "forces"
 		comp[id] = int(comp.get(id, 0)) + 1
-	var atext := "Your forces:\n"
+	var atext := "Your forces\n"
 	for id in comp:
-		atext += "  %d x %s\n" % [comp[id], GameData.UNITS[id]["name"]]
-	if not relics.is_empty():
-		atext += "\nRelics:\n"
-		for r in relics:
-			atext += "  * %s\n" % RELIC_DEFS[r]["name"]
+		atext += "  %d  %s\n" % [comp[id], GameData.UNITS[id]["name"]]
 	var al := Label.new()
 	al.text = atext
-	al.position = Vector2(ARENA.x - 300, 84)
+	al.position = Vector2(ARENA.x - 260, 84)
 	al.add_theme_font_size_override("font_size", 15)
+	al.add_theme_color_override("font_color", COL_INK)
 	al.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.add_child(al)
 
@@ -1161,6 +1207,7 @@ func spawn_float_text(pos: Vector2, text: String, color: Color) -> void:
 
 func _clear_panel() -> void:
 	rally_btn = null
+	_hide_hover()
 	for c in panel.get_children():
 		panel.remove_child(c)
 		c.queue_free()
@@ -1174,7 +1221,8 @@ func _update_top() -> void:
 	var s := "Gold: %d\nIncome: +%d/turn\nBattle: %d/%d" % [gold, income, battle_num, MAX_BATTLES]
 	if phase == Phase.BATTLE:
 		s += "\nUnits: %d   Enemies: %d" % [peasants.size(), enemies.size()]
-	if info_text != "":
+	# Transient messages only clutter the menus, not the battlefield HUD.
+	if info_text != "" and (phase == Phase.SHOP or phase == Phase.GUILD):
 		s += "\n" + info_text
 	top_label.text = s
 
@@ -1243,6 +1291,19 @@ func _buy(id: String) -> void:
 	_build_shop_ui()
 	_update_top()
 
+func _unrecruit(i: int) -> void:
+	if i < 0 or i >= recruited_this_cycle.size():
+		return
+	var uid: String = recruited_this_cycle[i]
+	recruited_this_cycle.remove_at(i)
+	army.erase(uid)
+	recruits_left += 1
+	if uid in SPECIALIST_IDS:
+		gold += int(GameData.UNITS[uid]["cost"])   # refund the hire
+	info_text = "Removed %s." % GameData.UNITS[uid]["name"]
+	_build_shop_ui()
+	_update_top()
+
 func _buy_relic(id: String) -> void:
 	if id in relics:
 		return
@@ -1263,12 +1324,6 @@ func _rally() -> void:
 		info_text = "To arms! The peasants surge forward."
 
 func _process(delta: float) -> void:
-	if phase == Phase.DEPLOY or phase == Phase.BATTLE:
-		_update_hover()
-	elif hover_label.visible:
-		hover_label.visible = false
-	if phase == Phase.DEPLOY:
-		queue_redraw()   # keep the build grid live
 	if rally_time > 0.0:
 		rally_time -= delta
 	if rally_cd > 0.0:
@@ -1278,6 +1333,19 @@ func _process(delta: float) -> void:
 			rally_btn.disabled = rally_cd > 0.0
 			rally_btn.text = "Rally!" if rally_cd <= 0.0 else "Rally (%ds)" % int(ceil(rally_cd))
 		_update_top()
+	if phase == Phase.DEPLOY or phase == Phase.BATTLE:
+		_update_hover()
+	if phase == Phase.DEPLOY:
+		queue_redraw()   # keep the build grid live
+
+func _show_hover(text: String) -> void:
+	hover_label.text = text
+	hover_label.position = get_global_mouse_position() + Vector2(14, 12)
+	hover_label.visible = true
+
+func _hide_hover() -> void:
+	if hover_label:
+		hover_label.visible = false
 
 # ---------------------------------------------------------------- helpers / background
 
