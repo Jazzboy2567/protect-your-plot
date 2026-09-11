@@ -100,6 +100,7 @@ func _ready() -> void:
 	top_label = Label.new()
 	top_label.position = Vector2(16, 10)
 	top_label.add_theme_font_size_override("font_size", 20)
+	top_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud.add_child(top_label)
 
 	panel = Control.new()
@@ -131,7 +132,7 @@ func _ready() -> void:
 	ctrl_full.pressed.connect(_toggle_fullscreen)
 	hud.add_child(ctrl_full)
 
-	buildings = [{"id": "castle", "gx": CASTLE_GX, "gy": CASTLE_GY}]
+	buildings = [{"id": "castle", "gx": CASTLE_GX, "gy": CASTLE_GY}, {"id": "church", "gx": 1, "gy": 12}]
 	show_shop()
 
 func is_fighting() -> bool:
@@ -247,7 +248,7 @@ func _restart() -> void:
 	peasant_recruits = RECRUIT_CAP
 	specialist_recruits = RECRUIT_CAP
 	dead_this_battle = []
-	buildings = [{"id": "castle", "gx": CASTLE_GX, "gy": CASTLE_GY}]
+	buildings = [{"id": "castle", "gx": CASTLE_GX, "gy": CASTLE_GY}, {"id": "church", "gx": 1, "gy": 12}]
 	_build_sel = ""
 	info_text = ""
 	show_shop()
@@ -532,7 +533,9 @@ func _command_selected_to(pos: Vector2) -> void:
 	if sel.is_empty():
 		return
 	var cp := pos
-	cp.x = clampf(cp.x, 24.0, 880.0)
+	# During deploy, keep units on your own side; they may advance once fighting.
+	var max_x := (FENCE_X - 12.0) if phase == Phase.DEPLOY else 880.0
+	cp.x = clampf(cp.x, 24.0, max_x)
 	cp.y = clampf(cp.y, 24.0, ARENA.y - 20.0)
 	var i := 0
 	for p in sel:
@@ -637,7 +640,17 @@ func _shop_header(text: String, x: float, y: float) -> void:
 	l.text = text
 	l.position = Vector2(x, y)
 	l.add_theme_font_size_override("font_size", 19)
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.add_child(l)
+
+func _wave_summary(n: int) -> String:
+	var counts := {}
+	for id in GameData.generate_wave(n):
+		counts[id] = int(counts.get(id, 0)) + 1
+	var parts: Array = []
+	for id in counts:
+		parts.append("%d x %s" % [counts[id], GameData.UNITS[id]["name"]])
+	return " · ".join(parts)
 
 func _build_deploy_ui() -> void:
 	_clear_panel()
@@ -645,7 +658,15 @@ func _build_deploy_ui() -> void:
 	hint.text = "DEPLOY — Move Units: drag a box to select, click a spot to send them (works mid-battle too).\nOr pick a building and click a tile on your side to place it. Walls block enemies until destroyed."
 	hint.position = Vector2(16, 44)
 	hint.add_theme_font_size_override("font_size", 14)
+	hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.add_child(hint)
+
+	var tele := Label.new()
+	tele.text = "Incoming wave:  " + _wave_summary(battle_num)
+	tele.position = Vector2(392, 12)
+	tele.add_theme_font_size_override("font_size", 14)
+	tele.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(tele)
 
 	var bx := 16.0
 	var by := 82.0
@@ -701,6 +722,7 @@ func _build_roster_label() -> void:
 	al.text = atext
 	al.position = Vector2(ARENA.x - 300, 84)
 	al.add_theme_font_size_override("font_size", 15)
+	al.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.add_child(al)
 
 func _mk_button(text: String, pos: Vector2, size: Vector2, cb: Callable) -> Button:
