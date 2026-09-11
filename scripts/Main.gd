@@ -21,6 +21,16 @@ const GUILD_NAMES := {
 	"herbalist": "Apothecary", "fisherman": "Wharf", "torchbearer": "Wharf",
 	"baker": "Bakers' Row", "monk": "Abbey",
 }
+
+# ---- Key palette: black/dark ground, gold-orange accent, cream text ----
+const COL_PANEL := Color(0.11, 0.095, 0.065)
+const COL_CARD := Color(0.17, 0.14, 0.085)
+const COL_BTN := Color(0.21, 0.17, 0.09)
+const COL_BTN_HOVER := Color(0.30, 0.23, 0.11)
+const COL_GOLD := Color(0.94, 0.66, 0.18)
+const COL_INK := Color(0.94, 0.89, 0.75)
+const COL_SOFT := Color(0.70, 0.62, 0.46)
+const COL_BORDER := Color(0.52, 0.39, 0.16)
 const RECRUIT_CAP := 3
 const MAX_CONTRACTS := 4
 
@@ -121,6 +131,7 @@ func _ready() -> void:
 	ctrl_speed.position = Vector2(ARENA.x - 250, 10)
 	ctrl_speed.size = Vector2(110, 30)
 	ctrl_speed.pressed.connect(_cycle_speed)
+	_style_button(ctrl_speed)
 	hud.add_child(ctrl_speed)
 
 	ctrl_full = Button.new()
@@ -128,6 +139,7 @@ func _ready() -> void:
 	ctrl_full.position = Vector2(ARENA.x - 132, 10)
 	ctrl_full.size = Vector2(122, 30)
 	ctrl_full.pressed.connect(_toggle_fullscreen)
+	_style_button(ctrl_full)
 	hud.add_child(ctrl_full)
 
 	buildings = [{"id": "castle", "gx": CASTLE_GX, "gy": CASTLE_GY}, {"id": "church", "gx": 1, "gy": 8}]
@@ -658,8 +670,8 @@ func _add_backdrop() -> void:
 
 func _card_style() -> StyleBoxFlat:
 	var s := StyleBoxFlat.new()
-	s.bg_color = Color(0.95, 0.92, 0.83)
-	s.border_color = Color(0.70, 0.64, 0.47)
+	s.bg_color = COL_CARD
+	s.border_color = COL_BORDER
 	s.set_border_width_all(1)
 	s.set_corner_radius_all(5)
 	s.content_margin_left = 14
@@ -668,17 +680,70 @@ func _card_style() -> StyleBoxFlat:
 	s.content_margin_bottom = 12
 	return s
 
+func _panel_style() -> StyleBoxFlat:
+	var s := StyleBoxFlat.new()
+	s.bg_color = COL_PANEL
+	s.border_color = COL_BORDER
+	s.set_border_width_all(2)
+	s.set_corner_radius_all(7)
+	s.content_margin_left = 22
+	s.content_margin_right = 22
+	s.content_margin_top = 18
+	s.content_margin_bottom = 20
+	return s
+
+# Give any Button the dark/gold theme.
+func _style_button(b: Button) -> void:
+	var n := StyleBoxFlat.new()
+	n.bg_color = COL_BTN
+	n.border_color = COL_BORDER
+	n.set_border_width_all(1)
+	n.set_corner_radius_all(4)
+	n.content_margin_left = 10
+	n.content_margin_right = 10
+	n.content_margin_top = 6
+	n.content_margin_bottom = 6
+	var h: StyleBoxFlat = n.duplicate()
+	h.bg_color = COL_BTN_HOVER
+	h.border_color = COL_GOLD
+	var dis: StyleBoxFlat = n.duplicate()
+	dis.bg_color = Color(0.13, 0.12, 0.08)
+	dis.border_color = Color(0.30, 0.27, 0.20)
+	b.add_theme_stylebox_override("normal", n)
+	b.add_theme_stylebox_override("hover", h)
+	b.add_theme_stylebox_override("pressed", h)
+	b.add_theme_stylebox_override("focus", h)
+	b.add_theme_stylebox_override("disabled", dis)
+	b.add_theme_color_override("font_color", COL_INK)
+	b.add_theme_color_override("font_hover_color", Color(1.0, 0.9, 0.6))
+	b.add_theme_color_override("font_disabled_color", COL_SOFT)
+
+func _menu_button(text: String, cb: Callable) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.custom_minimum_size = Vector2(256, 30)
+	b.pressed.connect(cb)
+	_style_button(b)
+	return b
+
+func _section_label(text: String) -> Label:
+	var l := Label.new()
+	l.text = text
+	l.add_theme_color_override("font_color", COL_GOLD)
+	l.add_theme_font_size_override("font_size", 16)
+	return l
+
 func _stat_row(label_text: String, value_text: String) -> HBoxContainer:
 	var row := HBoxContainer.new()
 	var a := Label.new()
 	a.text = label_text
-	a.add_theme_color_override("font_color", Color(0.42, 0.39, 0.32))
+	a.add_theme_color_override("font_color", COL_SOFT)
 	a.add_theme_font_size_override("font_size", 13)
 	var sp := Control.new()
 	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var b := Label.new()
 	b.text = value_text
-	b.add_theme_color_override("font_color", Color(0.16, 0.14, 0.11))
+	b.add_theme_color_override("font_color", COL_INK)
 	b.add_theme_font_size_override("font_size", 13)
 	row.add_child(a)
 	row.add_child(sp)
@@ -695,12 +760,12 @@ func _guild_card(id: String) -> Control:
 	pc.add_child(v)
 	var gl := Label.new()
 	gl.text = str(GUILD_NAMES.get(id, "Guild")).to_upper()
-	gl.add_theme_color_override("font_color", Color(0.62, 0.45, 0.10))
+	gl.add_theme_color_override("font_color", COL_GOLD)
 	gl.add_theme_font_size_override("font_size", 11)
 	v.add_child(gl)
 	var nm := Label.new()
 	nm.text = d["name"]
-	nm.add_theme_color_override("font_color", Color(0.14, 0.12, 0.09))
+	nm.add_theme_color_override("font_color", COL_INK)
 	nm.add_theme_font_size_override("font_size", 20)
 	v.add_child(nm)
 	var rng := float(d.get("range", 6))
@@ -709,9 +774,12 @@ func _guild_card(id: String) -> Control:
 	v.add_child(_stat_row("Atk speed", "%.1f / s" % (1.0 / float(d.get("cooldown", 1.0)))))
 	v.add_child(_stat_row("Range", "melee" if rng <= 12.0 else str(int(rng))))
 	v.add_child(_stat_row("Cost", "%dg" % int(d["cost"])))
+	var sep := HSeparator.new()
+	v.add_child(sep)
 	var btn := Button.new()
 	btn.text = "Sign Contract"
 	btn.pressed.connect(func(): _sign_contract(id))
+	_style_button(btn)
 	v.add_child(btn)
 	return pc
 
@@ -731,6 +799,7 @@ func _build_guild_ui() -> void:
 	var head := Label.new()
 	head.text = "Guild Contract   ·   Choose one (free)   ·   Contracts %d/%d   ·   Gold %d" % [contracts.size(), MAX_CONTRACTS, gold]
 	head.add_theme_font_size_override("font_size", 22)
+	head.add_theme_color_override("font_color", COL_GOLD)
 	head.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	head.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	col.add_child(head)
@@ -752,66 +821,123 @@ func _build_guild_ui() -> void:
 	cont.custom_minimum_size = Vector2(240, 40)
 	cont.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	cont.pressed.connect(open_shop)
+	_style_button(cont)
 	col.add_child(cont)
 
-# The Shop + Recruit page (interlude): recruit peasants, hire contracted
-# specialists, buy relics, then deploy.
+# The Shop + Recruit page (interlude): a centered modal with two columns.
 func _build_shop_ui() -> void:
 	_clear_panel()
 	top_label.visible = false
 	_add_backdrop()
-	_shop_header("Shop & Recruit  ·  Gold %d  ·  Battle %d/%d" % [gold, battle_num, MAX_BATTLES], 24, 20)
-	var x := 24.0
-	var y := 64.0
-	_shop_header("Recruit", x, y)
-	y += 32
-	var pb := _mk_button("Call Peasant (free) — %d left" % peasant_recruits, Vector2(x, y), Vector2(264, 26), func(): _buy("peasant"))
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(center)
+	var outer := VBoxContainer.new()
+	outer.add_theme_constant_override("separation", 12)
+	center.add_child(outer)
+
+	var head := Label.new()
+	head.text = "Shop & Recruit   ·   Gold %d   ·   Battle %d/%d" % [gold, battle_num, MAX_BATTLES]
+	head.add_theme_font_size_override("font_size", 22)
+	head.add_theme_color_override("font_color", COL_GOLD)
+	head.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	outer.add_child(head)
+
+	var pc := PanelContainer.new()
+	pc.add_theme_stylebox_override("panel", _panel_style())
+	pc.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	outer.add_child(pc)
+	var cols := HBoxContainer.new()
+	cols.add_theme_constant_override("separation", 34)
+	pc.add_child(cols)
+
+	var rc := VBoxContainer.new()
+	rc.add_theme_constant_override("separation", 6)
+	cols.add_child(rc)
+	rc.add_child(_section_label("Recruit"))
+	var pb := _menu_button("Call Peasant (free) — %d left" % peasant_recruits, func(): _buy("peasant"))
 	pb.disabled = peasant_recruits <= 0
-	y += 32
+	rc.add_child(pb)
 	if contracts.is_empty():
-		var l := Label.new()
-		l.text = "Sign guild contracts to hire specialists."
-		l.position = Vector2(x, y)
-		l.add_theme_font_size_override("font_size", 13)
-		l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		panel.add_child(l)
-		y += 28
+		var hint := Label.new()
+		hint.text = "Sign guild contracts to hire specialists."
+		hint.add_theme_color_override("font_color", COL_SOFT)
+		hint.add_theme_font_size_override("font_size", 13)
+		rc.add_child(hint)
 	else:
 		for id in contracts:
 			var cost: int = GameData.UNITS[id]["cost"]
-			var b := _mk_button("%s — %dg  (%d left)" % [GameData.UNITS[id]["name"], cost, specialist_recruits], Vector2(x, y), Vector2(264, 26), func(): _buy(id))
+			var b := _menu_button("%s — %dg  (%d left)" % [GameData.UNITS[id]["name"], cost, specialist_recruits], func(): _buy(id))
 			b.disabled = specialist_recruits <= 0 or gold < cost
-			y += 28
-	y += 14
-	_mk_button("Deploy for Battle %d  >>" % battle_num, Vector2(x, y), Vector2(264, 40), start_deploy)
+			rc.add_child(b)
 
-	# Relic shop on the right.
-	var rx := 340.0
-	var ry := 60.0
-	_shop_header("Shop", rx, ry)
-	ry += 32
+	var sc := VBoxContainer.new()
+	sc.add_theme_constant_override("separation", 6)
+	cols.add_child(sc)
+	sc.add_child(_section_label("Shop"))
 	for id in RELIC_DEFS:
 		if id in relics:
 			continue
 		var d: Dictionary = RELIC_DEFS[id]
-		var b := _mk_button("%s — %dg" % [d["name"], d["cost"]], Vector2(rx, ry), Vector2(340, 24), func(): _buy_relic(id))
+		var b := _menu_button("%s — %dg" % [d["name"], int(d["cost"])], func(): _buy_relic(id))
 		b.disabled = gold < int(d["cost"])
-		ry += 26
+		sc.add_child(b)
 
-# Non-interlude rounds: no shopping — just deploy your standing force.
+	var dep := _menu_button("Deploy for Battle %d  >>" % battle_num, start_deploy)
+	dep.custom_minimum_size = Vector2(280, 42)
+	dep.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	outer.add_child(dep)
+
+# Non-interlude rounds: a small centered modal — just deploy your standing force.
 func _build_predeploy_ui() -> void:
 	_clear_panel()
 	top_label.visible = false
 	_add_backdrop()
-	_shop_header("Battle %d/%d  ·  Gold %d  —  hold the line (recruiting returns every 4th battle)" % [battle_num, MAX_BATTLES, gold], 24, 40)
-	_mk_button("Deploy for Battle %d  >>" % battle_num, Vector2(24, 92), Vector2(264, 40), start_deploy)
-	_build_roster_label()
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(center)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 12)
+	center.add_child(col)
+
+	var head := Label.new()
+	head.text = "Battle %d/%d   ·   Gold %d" % [battle_num, MAX_BATTLES, gold]
+	head.add_theme_font_size_override("font_size", 22)
+	head.add_theme_color_override("font_color", COL_GOLD)
+	head.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	col.add_child(head)
+
+	var sub := Label.new()
+	sub.text = "Hold the line — recruiting returns every 4th battle."
+	sub.add_theme_color_override("font_color", COL_SOFT)
+	sub.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	col.add_child(sub)
+
+	var comp := {}
+	for id in army:
+		comp[id] = int(comp.get(id, 0)) + 1
+	var parts: Array = []
+	for id in comp:
+		parts.append("%d %s" % [comp[id], GameData.UNITS[id]["name"]])
+	var rl := Label.new()
+	rl.text = "Your forces:  " + ", ".join(parts)
+	rl.add_theme_color_override("font_color", COL_INK)
+	rl.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	col.add_child(rl)
+
+	var dep := _menu_button("Deploy for Battle %d  >>" % battle_num, start_deploy)
+	dep.custom_minimum_size = Vector2(280, 42)
+	dep.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	col.add_child(dep)
 
 func _shop_header(text: String, x: float, y: float) -> void:
 	var l := Label.new()
 	l.text = text
 	l.position = Vector2(x, y)
 	l.add_theme_font_size_override("font_size", 19)
+	l.add_theme_color_override("font_color", COL_GOLD)
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.add_child(l)
 
@@ -896,6 +1022,7 @@ func _mk_button(text: String, pos: Vector2, size: Vector2, cb: Callable) -> Butt
 	b.position = pos
 	b.size = size
 	b.pressed.connect(cb)
+	_style_button(b)
 	panel.add_child(b)
 	return b
 
