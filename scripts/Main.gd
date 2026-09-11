@@ -43,13 +43,6 @@ const RELIC_DEFS := {
 	"hawk_eye":         {"name": "Hawk Eye (ranged +30 range)", "cost": 45},
 	"berserkers_brew":  {"name": "Berserker's Brew (+40% dmg, -15% HP)", "cost": 55},
 }
-# One-use tactical items, activated during battle.
-const CONSUMABLE_DEFS := {
-	"firepot":     {"name": "Firepot", "cost": 25},
-	"holy_water":  {"name": "Holy Water", "cost": 30},
-	"rally_horn":  {"name": "Rally Horn", "cost": 20},
-	"grain_bag":   {"name": "Bag of Grain", "cost": 25},
-}
 const STRUCT_ITEMS := ["barricade", "spikes", "palisade", "stone_wall"]
 
 var gold: int = START_GOLD
@@ -62,7 +55,6 @@ var rally_cd: float = 0.0
 var rally_time: float = 0.0
 
 var relics: Array = []
-var consumables: Dictionary = {}
 var peasant_recruits: int = RECRUIT_CAP
 var specialist_recruits: int = RECRUIT_CAP
 var dead_this_battle: Array = []
@@ -242,7 +234,6 @@ func _restart() -> void:
 	rally_cd = 0.0
 	rally_time = 0.0
 	relics = []
-	consumables = {}
 	peasant_recruits = RECRUIT_CAP
 	specialist_recruits = RECRUIT_CAP
 	dead_this_battle = []
@@ -637,18 +628,6 @@ func _build_shop_ui() -> void:
 	y += 10
 	_mk_button("Deploy for Battle %d  >>" % battle_num, Vector2(x, y), Vector2(232, 38), start_deploy)
 
-	# ---- Middle column: consumables (buildings are placed in the Deploy phase) ----
-	var mx := 288.0
-	var my := 82.0
-	_shop_header("Consumables", mx, my)
-	my += 30
-	for id in CONSUMABLE_DEFS:
-		var d: Dictionary = CONSUMABLE_DEFS[id]
-		var have: int = int(consumables.get(id, 0))
-		var b := _mk_button("%s (x%d) — %dg" % [d["name"], have, d["cost"]], Vector2(mx, my), Vector2(250, 26), func(): _buy_consumable(id))
-		b.disabled = gold < int(d["cost"])
-		my += 28
-
 	# ---- Right column: merchant relics every 4th battle, else roster ----
 	if battle_num % 4 == 0:
 		var rx := 560.0
@@ -727,15 +706,6 @@ func _set_build_sel(id: String) -> void:
 func _build_battle_ui() -> void:
 	_clear_panel()
 	rally_btn = _mk_button("Rally!", Vector2(16, 46), Vector2(130, 34), _rally)
-	# Consumable items along the bottom.
-	var cx := 16.0
-	for id in CONSUMABLE_DEFS:
-		var have: int = int(consumables.get(id, 0))
-		if have <= 0:
-			continue
-		var d: Dictionary = CONSUMABLE_DEFS[id]
-		_mk_button("%s (x%d)" % [d["name"], have], Vector2(cx, ARENA.y - 48), Vector2(150, 34), func(): _use_consumable(id))
-		cx += 156
 
 func _build_roster_label() -> void:
 	var comp := {}
@@ -792,9 +762,14 @@ func _clear_panel() -> void:
 		c.queue_free()
 
 func _update_top() -> void:
-	var s := "Gold: %d    Battle: %d/%d" % [gold, battle_num, MAX_BATTLES]
+	var units := 0
+	for id in army:
+		if id in PEASANT_IDS or id in SPECIALIST_IDS:
+			units += 1
+	var income := 10 + 2 * units
+	var s := "Gold: %d\nIncome: +%d/turn\nBattle: %d/%d" % [gold, income, battle_num, MAX_BATTLES]
 	if phase == Phase.BATTLE:
-		s += "    Peasants: %d    Enemies: %d" % [peasants.size(), enemies.size()]
+		s += "\nUnits: %d   Enemies: %d" % [peasants.size(), enemies.size()]
 	if info_text != "":
 		s += "\n" + info_text
 	top_label.text = s
@@ -844,59 +819,6 @@ func _buy_relic(id: String) -> void:
 	_build_shop_ui()
 	_update_top()
 
-func _buy_consumable(id: String) -> void:
-	var cost: int = int(CONSUMABLE_DEFS[id]["cost"])
-	if gold >= cost:
-		gold -= cost
-		consumables[id] = int(consumables.get(id, 0)) + 1
-		info_text = "Bought %s." % CONSUMABLE_DEFS[id]["name"]
-	else:
-		info_text = "Not enough gold."
-	_build_shop_ui()
-	_update_top()
-
-func _use_consumable(id: String) -> void:
-	if phase != Phase.BATTLE or int(consumables.get(id, 0)) <= 0:
-		return
-	consumables[id] = int(consumables[id]) - 1
-	match id:
-		"firepot":
-			var sorted := enemies.duplicate()
-			sorted.sort_custom(func(a, b): return a.global_position.x < b.global_position.x)
-			var n := 0
-			for e in sorted:
-				if is_instance_valid(e):
-					e.ignite(6.0, 4.0)
-					n += 1
-				if n >= 8:
-					break
-			flash_banner("Firepot!", Color(1, 0.6, 0.2))
-		"holy_water":
-			for e in enemies:
-				if is_instance_valid(e) and e.applies_plague:
-					e.take_damage(45.0, true)
-			for p in peasants:
-				p.plague_time = 0.0
-			flash_banner("Holy Water!", Color(0.8, 0.9, 1))
-		"rally_horn":
-			rally_time = 5.0
-			flash_banner("Rally!", Color(1, 0.9, 0.4))
-		"grain_bag":
-			for i in 4:
-				var u := _make_unit("peasant", 0)
-				u.position = Vector2(90, 210 + i * 50)
-				u.command_point = u.position
-				_apply_relics(u)
-				world.add_child(u)
-				peasants.append(u)
-			flash_banner("Reinforcements!", Color(0.7, 1, 0.7))
-		"plague_cure":
-			for p in peasants:
-				p.plague_time = 0.0
-			flash_banner("Plague cured!", Color(0.6, 1, 0.6))
-	_build_battle_ui()
-	_update_top()
-
 func _rally() -> void:
 	if rally_cd <= 0.0:
 		rally_time = 5.0
@@ -919,17 +841,33 @@ func _process(delta: float) -> void:
 # ---------------------------------------------------------------- helpers / background
 
 func _draw() -> void:
-	draw_rect(Rect2(Vector2.ZERO, ARENA), Color(0.30, 0.45, 0.22))            # field
-	draw_rect(Rect2(Vector2.ZERO, Vector2(360, ARENA.y)), Color(0.34, 0.40, 0.20))  # your tilled plot
-	draw_line(Vector2(FENCE_X, 0), Vector2(FENCE_X, ARENA.y), Color(0.45, 0.32, 0.18), 4.0) # fence
-	draw_rect(Rect2(Vector2(900, 0), Vector2(252, ARENA.y)), Color(0.28, 0.30, 0.20)) # enemy approach
-	# Build grid over your side during deploy.
+	draw_rect(Rect2(Vector2.ZERO, ARENA), Color(0.30, 0.42, 0.20))                       # field
+	draw_rect(Rect2(Vector2.ZERO, Vector2(FENCE_X, ARENA.y)), Color(0.34, 0.40, 0.19))   # your tilled plot
+	draw_rect(Rect2(Vector2(900, 0), Vector2(252, ARENA.y)), Color(0.25, 0.28, 0.17))    # enemy approach
+
+	# Crop flair (placeholder yellow) above & below the castle footprint.
+	var cx0 := CASTLE_GX * TILE
+	var cw := CASTLE_SPAN * TILE
+	draw_rect(Rect2(cx0, (CASTLE_GY - 2) * TILE, cw, 2 * TILE), Color(0.72, 0.60, 0.16))
+	draw_rect(Rect2(cx0, (CASTLE_GY + CASTLE_SPAN) * TILE, cw, 2 * TILE), Color(0.72, 0.60, 0.16))
+
+	draw_line(Vector2(FENCE_X, 0), Vector2(FENCE_X, ARENA.y), Color(0.45, 0.32, 0.18), 4.0)  # fence
+
+	# Build grid over your side during deploy (hidden once the battle starts).
 	if phase == Phase.DEPLOY:
 		for gx in GRID_COLS:
 			for gy in GRID_ROWS:
 				var r := Rect2(gx * TILE, gy * TILE, TILE, TILE)
 				draw_rect(r, Color(1, 0.6, 0.2, 0.14) if _tile_occupied(gx, gy) else Color(1, 1, 1, 0.04))
 				draw_rect(r, Color(1, 1, 1, 0.10), false, 1.0)
+
+	# Relic dock: a gold-ringed circle per relic taken, down the top-right.
+	var ry := 52.0
+	for i in relics.size():
+		draw_circle(Vector2(ARENA.x - 24.0, ry), 11.0, Color(0.12, 0.10, 0.05, 0.85))
+		draw_arc(Vector2(ARENA.x - 24.0, ry), 11.0, 0.0, TAU, 22, Color(0.66, 0.49, 0.13), 2.0)
+		ry += 28.0
+
 	if _dragging:
 		draw_rect(_sel_rect, Color(1, 1, 0.4, 0.12))
 		draw_rect(_sel_rect, Color(1, 1, 0.4, 0.7), false, 1.5)
