@@ -32,6 +32,7 @@ var applies_burn: bool = false
 var applies_slow: bool = false
 var knockback: float = 0.0
 var bonus_beast: float = 1.0          # damage multiplier vs beast enemies
+var invulnerable: bool = false        # cannot be damaged or knocked (e.g. the church)
 var behavior: String = ""             # "" or "diver" (target the backline)
 var crit_chance: float = 0.0          # 0..1 chance to crit
 var crit_mult: float = 1.5            # crit damage multiplier
@@ -74,6 +75,7 @@ func setup(def: Dictionary, _team: int, _main) -> void:
 	aura_range = float(def.get("aura_range", 0))
 	aura_value = float(def.get("aura_value", 0))
 	is_beast = bool(def.get("beast", false))
+	invulnerable = bool(def.get("invuln", false))
 	plague_immune = bool(def.get("plague_immune", false))
 	applies_plague = bool(def.get("applies_plague", false))
 	applies_burn = bool(def.get("applies_burn", false))
@@ -194,7 +196,7 @@ func _physics_process(delta: float) -> void:
 				target.ignite(3.0, 3.0)
 			if applies_slow:
 				target.slow_for(1.5)
-			if knockback > 0.0:
+			if knockback > 0.0 and not target.is_structure:
 				var kb: Vector2 = target.global_position - global_position
 				var kl := kb.length()
 				if kl > 0.001:
@@ -223,7 +225,7 @@ func _movement_goal(has_t: bool, dist: float, reach: float):
 	return null
 
 func take_damage(amount: float, pierce_flag: bool = false, is_crit: bool = false) -> void:
-	if _dead:
+	if _dead or invulnerable:
 		return
 	if evasion > 0.0 and randf() < evasion:
 		if main:
@@ -268,13 +270,14 @@ func die() -> void:
 	t.tween_callback(queue_free)
 
 func _draw() -> void:
-	# HP bar
-	var w := radius * 2.0
-	var frac := clampf(hp / max_hp, 0.0, 1.0)
-	var bar_y := -radius - 9.0
-	draw_rect(Rect2(-radius, bar_y, w, 3.0), Color(0, 0, 0, 0.5))
-	var bar_col := Color(0.25, 0.9, 0.3) if team == 0 else Color(0.9, 0.3, 0.2)
-	draw_rect(Rect2(-radius, bar_y, w * frac, 3.0), bar_col)
+	# HP bar — only while damaged, so full-health units/buildings stay clean.
+	if hp < max_hp and not invulnerable:
+		var w := radius * 2.0
+		var frac := clampf(hp / max_hp, 0.0, 1.0)
+		var bar_y := -radius - 9.0
+		draw_rect(Rect2(-radius, bar_y, w, 3.0), Color(0, 0, 0, 0.5))
+		var bar_col := Color(0.25, 0.9, 0.3) if team == 0 else Color(0.9, 0.3, 0.2)
+		draw_rect(Rect2(-radius, bar_y, w * frac, 3.0), bar_col)
 
 	# Hit flash: briefly wash the body toward white when struck.
 	var c := body_color
