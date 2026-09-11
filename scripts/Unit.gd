@@ -35,6 +35,10 @@ var bonus_beast: float = 1.0          # damage multiplier vs beast enemies
 var behavior: String = ""             # "" or "diver" (target the backline)
 var crit_chance: float = 0.0          # 0..1 chance to crit
 var crit_mult: float = 1.5            # crit damage multiplier
+var heals: bool = false               # attacks heal the most-hurt nearby ally
+var heal_amount: float = 0.0
+var evasion: float = 0.0              # 0..1 chance to dodge a hit (rare)
+var targets: String = ""             # "" units; "structures" = go for walls/castle
 
 var plague_time: float = 0.0
 var plague_dps: float = 0.0
@@ -77,6 +81,10 @@ func setup(def: Dictionary, _team: int, _main) -> void:
 	knockback = float(def.get("knockback", 0))
 	bonus_beast = float(def.get("bonus_beast", 1.0))
 	behavior = def.get("behavior", "")
+	heals = bool(def.get("heals", false))
+	heal_amount = float(def.get("heal_amount", 0))
+	evasion = float(def.get("evasion", 0))
+	targets = def.get("targets", "")
 	body_color = def.get("color", Color(0.78, 0.80, 0.85))
 	_cd = randf() * attack_cooldown
 
@@ -114,16 +122,21 @@ func _physics_process(delta: float) -> void:
 			die()
 			return
 
-	# Acquire / re-acquire a target (divers go for your backline).
+	# Acquire / re-acquire a target.
 	if target == null or not is_instance_valid(target) or target.hp <= 0.0:
 		target = null
-		if team == 1 and behavior == "diver":
-			target = main.get_backline_peasant()
-		if target == null:
-			target = main.get_nearest_enemy(self)
+		if team == 0:
+			target = main.get_heal_target(self) if heals else main.get_nearest_enemy(self)
+		else:
+			if behavior == "diver":
+				target = main.get_backline_peasant()
+			elif targets == "structures":
+				target = main.get_nearest_structure(self)
+			if target == null:
+				target = main.get_nearest_enemy(self)
 
-	# A wall directly ahead must be broken through first.
-	if team == 1:
+	# A wall directly ahead must be broken through first (structure-hunters skip this).
+	if team == 1 and targets != "structures":
 		var wall = main.structure_ahead(self)
 		if wall != null:
 			target = wall
@@ -161,27 +174,31 @@ func _physics_process(delta: float) -> void:
 		dist = global_position.distance_to(target.global_position)
 		reach = attack_range + radius + target.radius
 
-	# Attack whatever is in range, applying on-hit effects.
+	# Act on whatever is in range: healers mend a hurt ally, everyone else strikes.
 	if has_t and dist <= reach and _cd <= 0.0:
 		_cd = attack_cooldown / (1.0 + haste)
-		var dmg := damage
-		if bonus_beast > 1.0 and target.is_beast:
-			dmg *= bonus_beast
-		var is_crit := crit_chance > 0.0 and randf() < crit_chance
-		if is_crit:
-			dmg *= crit_mult
-		target.take_damage(dmg * main.damage_mult(team), pierce, is_crit)
-		if applies_plague:
-			target.infect(3.0, 4.0)
-		if applies_burn:
-			target.ignite(3.0, 3.0)
-		if applies_slow:
-			target.slow_for(1.5)
-		if knockback > 0.0:
-			var kb: Vector2 = target.global_position - global_position
-			var kl := kb.length()
-			if kl > 0.001:
-				target.global_position += kb / kl * knockback
+		if heals:
+			target.hp = minf(target.max_hp, target.hp + heal_amount)
+			target.queue_redraw()
+			if main:
+				main.spawn_float_text(target.global_position + Vector2(0, -target.radius - 4), "+" + str(int(heal_amount)), Color(0.5, 0.95, 0.5))
+		else:
+			var dmg := damage
+			if bonus_beast > 1.0 and target.is_beast:
+				dmg *= bonus_beast
+			var is_crit := crit_chance > 0.0 and randf() < crit_chance
+			if is_crit:
+				dmg *= crit_mult
+			target.take_damage(dmg * main.damage_mult(team), pierce, is_crit)
+			if applies_burn:
+				target.ignite(3.0, 3.0)
+			if applies_slow:
+				target.slow_for(1.5)
+			if knockback > 0.0:
+				var kb: Vector2 = target.global_position - global_position
+				var kl := kb.length()
+				if kl > 0.001:
+					target.global_position += kb / kl * knockback
 
 	# Move toward the goal (hold the command point; enemies advance).
 	var goal = _movement_goal(has_t, dist, reach)
@@ -207,6 +224,10 @@ func _movement_goal(has_t: bool, dist: float, reach: float):
 
 func take_damage(amount: float, pierce_flag: bool = false, is_crit: bool = false) -> void:
 	if _dead:
+		return
+	if evasion > 0.0 and randf() < evasion:
+		if main:
+			main.spawn_float_text(global_position + Vector2(0, -radius - 4), "miss", Color(0.82, 0.82, 0.88))
 		return
 	var dealt := amount if pierce_flag else maxf(1.0, amount - armor)
 	hp -= dealt

@@ -9,12 +9,12 @@ enum Phase { SHOP, DEPLOY, BATTLE, GAMEOVER, WIN }
 const ARENA := Vector2(1152, 648)
 const START_GOLD := 70
 const MAX_BATTLES := 12
-const START_ARMY := ["farmer", "farmer", "farmer", "militia"]
+const START_ARMY := ["peasant", "peasant", "peasant", "peasant"]
 const FENCE_X := 357.0
 
 # Peasants join free (capped); specialists cost gold (capped); buildings cost gold.
-const PEASANT_IDS := ["farmer", "militia"]
-const SPECIALIST_IDS := ["archer", "woodcutter", "hunter", "herbalist", "fisherman", "torchbearer", "baker", "monk", "plague_doctor"]
+const PEASANT_IDS := ["peasant"]
+const SPECIALIST_IDS := ["archer", "woodcutter", "hunter", "herbalist", "fisherman", "torchbearer", "baker", "monk"]
 const BUILDING_IDS := ["barricade", "spikes", "palisade", "stone_wall", "church"]
 const RECRUIT_CAP := 3
 
@@ -31,11 +31,10 @@ const RELIC_DEFS := {
 	"sharp_tools":      {"name": "Sharpened Tools (+25% dmg)", "cost": 60},
 	"village_bell":     {"name": "Village Bell (+20% atk spd)", "cost": 60},
 	"blacksmith_forge": {"name": "Blacksmith's Forge (+3 armor)", "cost": 55},
-	"rat_charm":        {"name": "Rat-Catcher's Charm (cure immune)", "cost": 50},
-	"full_granary":     {"name": "Full Granary (+2 free farmers)", "cost": 50},
+	"full_granary":     {"name": "Full Granary (+2 free peasants)", "cost": 50},
 	"fortifier":        {"name": "Fortifier (walls +80% HP)", "cost": 45},
 	"longbows":         {"name": "Longbows (archers +range/dmg)", "cost": 45},
-	"shields":          {"name": "Shields (militia/farmer +2 armor)", "cost": 40},
+	"shields":          {"name": "Shields (peasants +2 armor)", "cost": 40},
 	"sharpened_axes":   {"name": "Sharpened Axes (woodcutter +8)", "cost": 40},
 	"keen_edge":        {"name": "Keen Edge (+15% crit)", "cost": 55},
 	"warhorn":          {"name": "War Horn (+15% atk speed)", "cost": 50},
@@ -50,7 +49,6 @@ const CONSUMABLE_DEFS := {
 	"holy_water":  {"name": "Holy Water", "cost": 30},
 	"rally_horn":  {"name": "Rally Horn", "cost": 20},
 	"grain_bag":   {"name": "Bag of Grain", "cost": 25},
-	"plague_cure": {"name": "Plague Cure", "cost": 25},
 }
 const STRUCT_ITEMS := ["barricade", "spikes", "palisade", "stone_wall"]
 
@@ -159,9 +157,9 @@ func show_shop() -> void:
 		peasant_recruits = RECRUIT_CAP
 		specialist_recruits = RECRUIT_CAP
 	if army.is_empty():
-		army.append("farmer")
-		army.append("farmer")
-		info_text = "Your land lies empty — 2 serfs volunteer."
+		army.append("peasant")
+		army.append("peasant")
+		info_text = "Your land lies empty — 2 peasants volunteer."
 	_build_shop_ui()
 	if battle_num % 4 == 0:
 		flash_banner("A traveling merchant has arrived!", Color(1, 0.85, 0.4))
@@ -228,7 +226,7 @@ func _win_game() -> void:
 	phase = Phase.WIN
 	_clear_panel()
 	var lbl := Label.new()
-	lbl.text = "The plague is broken!\nYour plot endures. You win."
+	lbl.text = "The realm is safe!\nYour plot endures. You win."
 	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	lbl.position = Vector2(ARENA.x / 2.0 - 160.0, 210.0)
 	lbl.size = Vector2(320, 80)
@@ -270,10 +268,10 @@ func _spawn_peasants() -> void:
 		world.add_child(u)
 		peasants.append(u)
 
-	# Full Granary relic: extra free farmers each deploy.
+	# Full Granary relic: extra free peasants each deploy.
 	if "full_granary" in relics:
 		for k in 2:
-			var f := _make_unit("farmer", 0)
+			var f := _make_unit("peasant", 0)
 			f.position = Vector2(90 + randf_range(-6, 6), 220 + k * 50 + fight_i * 4)
 			f.command_point = f.position
 			_apply_relics(f)
@@ -301,7 +299,7 @@ func _apply_relics(u: Unit) -> void:
 					u.attack_range += 40
 					u.damage += 3
 			"shields":
-				if u.type_id == "militia" or u.type_id == "farmer":
+				if u.type_id == "peasant":
 					u.armor += 2
 			"sharpened_axes":
 				if u.type_id == "woodcutter":
@@ -427,16 +425,48 @@ func _despawn_all() -> void:
 # ---------------------------------------------------------------- combat queries
 
 func get_nearest_enemy(u: Unit):
+	# Prefer living units; enemies fall back to structures when no units remain.
 	var pool: Array = enemies if u.team == 0 else peasants
 	var best = null
 	var best_d := INF
 	for e in pool:
-		if not is_instance_valid(e) or e.hp <= 0.0:
+		if not is_instance_valid(e) or e.hp <= 0.0 or e.is_structure:
 			continue
 		var d: float = u.global_position.distance_squared_to(e.global_position)
 		if d < best_d:
 			best_d = d
 			best = e
+	if best == null and u.team == 1:
+		best = get_nearest_structure(u)
+	return best
+
+func get_nearest_structure(u: Unit):
+	var best = null
+	var best_d := INF
+	for p in peasants:
+		if not is_instance_valid(p) or not p.is_structure or p.hp <= 0.0:
+			continue
+		var d: float = u.global_position.distance_squared_to(p.global_position)
+		if d < best_d:
+			best_d = d
+			best = p
+	return best
+
+func get_heal_target(u: Unit):
+	# Most-hurt living non-structure ally within the healer's range.
+	var best = null
+	var best_frac := 1.0
+	for a in peasants:
+		if a == u or not is_instance_valid(a) or a.is_structure or a.hp <= 0.0:
+			continue
+		if a.hp >= a.max_hp:
+			continue
+		if u.global_position.distance_to(a.global_position) > u.attack_range + a.radius + u.radius:
+			continue
+		var frac: float = a.hp / a.max_hp
+		if frac < best_frac:
+			best_frac = frac
+			best = a
 	return best
 
 func get_allies(u: Unit) -> Array:
@@ -489,7 +519,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and event.keycode == KEY_F11:
 		_toggle_fullscreen()
 		return
-	if phase != Phase.DEPLOY and phase != Phase.BATTLE:
+	if phase != Phase.DEPLOY:   # positioning happens in Deploy only; battle is watch-only
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
@@ -853,7 +883,7 @@ func _use_consumable(id: String) -> void:
 			flash_banner("Rally!", Color(1, 0.9, 0.4))
 		"grain_bag":
 			for i in 4:
-				var u := _make_unit("farmer", 0)
+				var u := _make_unit("peasant", 0)
 				u.position = Vector2(90, 210 + i * 50)
 				u.command_point = u.position
 				_apply_relics(u)
