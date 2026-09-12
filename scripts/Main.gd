@@ -279,9 +279,9 @@ func open_shop() -> void:
 	_update_top()
 
 func open_predeploy() -> void:
-	phase = Phase.SHOP
-	_build_predeploy_ui()
-	_update_top()
+	# Non-interlude rounds skip the intermediate screen — straight to the grid,
+	# where you re-arrange units and walls against the telegraphed wave.
+	start_deploy()
 
 func _sign_contract(id: String) -> void:
 	if contracts.size() < MAX_CONTRACTS and not (id in contracts):
@@ -308,6 +308,7 @@ func begin_fight() -> void:
 	dead_this_battle.clear()
 	_build_battle_ui()
 	_update_top()
+	queue_redraw()   # drop the deploy grid the moment combat starts
 
 func _win_battle() -> void:
 	phase = Phase.SHOP
@@ -531,35 +532,94 @@ func _has_building(id: String) -> bool:
 			return true
 	return false
 
-func _place_building(pos: Vector2) -> void:
-	var sp := _span(_build_sel)
-	var gx := int(pos.x / TILE)
-	var gy := int(pos.y / TILE)
-	if gx < 0 or gx + sp.x > GRID_COLS or gy < 0 or gy + sp.y > GRID_ROWS:
-		info_text = "Build on your own tiles (left side)."
-		_update_top()
-		return
+func _plural(nm: String, n: int) -> String:
+	return nm if n == 1 else nm + "s"
+
+func _tile_occupied_except(gx: int, gy: int, except_b) -> bool:
+	for b in buildings:
+		if b == except_b:
+			continue
+		var sp := _span(b["id"])
+		if gx >= b["gx"] and gx < b["gx"] + sp.x and gy >= b["gy"] and gy < b["gy"] + sp.y:
+			return true
+	return false
+
+func _units_in_footprint(gx: int, gy: int, sp: Vector2i) -> bool:
+	var rect := Rect2(gx * TILE, gy * TILE, sp.x * TILE, sp.y * TILE)
+	for p in peasants:
+		if not is_instance_valid(p) or p.is_structure:
+			continue
+		if rect.has_point(p.global_position):
+			return true
+	return false
+
+# A footprint is placeable only if it's in-bounds and clear of buildings AND units.
+func _footprint_free(gx: int, gy: int, sp: Vector2i, except_b = null) -> bool:
+	if gx < 0 or gy < 0 or gx + sp.x > GRID_COLS or gy + sp.y > GRID_ROWS:
+		return false
 	for dx in sp.x:
 		for dy in sp.y:
-			if _tile_occupied(gx + dx, gy + dy):
-				info_text = "That space is occupied."
-				_update_top()
-				return
-	var cost: int = GameData.UNITS[_build_sel]["cost"]
-	if gold < cost:
-		info_text = "Not enough gold for that building."
-		_update_top()
-		return
-	gold -= cost
-	var b := {"id": _build_sel, "gx": gx, "gy": gy}
+			if _tile_occupied_except(gx + dx, gy + dy, except_b):
+				return false
+	return not _units_in_footprint(gx, gy, sp)
+
+func _do_place(id: String, gx: int, gy: int) -> Unit:
+	var b := {"id": id, "gx": gx, "gy": gy}
 	buildings.append(b)
-	var u := _make_unit(_build_sel, 0)
+	var u := _make_unit(id, 0)
 	u.position = _building_center(b)
 	u.command_point = u.position
 	u.set_meta("bref", b)
 	_apply_relics(u)
 	world.add_child(u)
 	peasants.append(u)
+	return u
+
+# Toolbar: buy a wall and drop it on the first free spot in front of the keep.
+func _buy_and_place(id: String) -> void:
+	var cost: int = int(GameData.UNITS[id]["cost"])
+	if gold < cost:
+		info_text = "Not enough gold for that."
+		_update_top()
+		return
+	var sp := _span(id)
+	for gx in range(6, -1, -1):
+		for gy in range(0, GRID_ROWS - sp.y + 1):
+			if _footprint_free(gx, gy, sp):
+				gold -= cost
+				_do_place(id, gx, gy)
+				info_text = "Placed %s — drag it into position." % GameData.UNITS[id]["name"]
+				_build_deploy_ui()
+				_update_top()
+				queue_redraw()
+				return
+	info_text = "No open tiles to place that."
+	_update_top()
+
+func _move_wall(wall, pos: Vector2) -> void:
+	if not wall.has_meta("bref"):
+		return
+	var b = wall.get_meta("bref")
+	var sp := _span(wall.type_id)
+	var gx := clampi(int(pos.x / TILE), 0, GRID_COLS - sp.x)
+	var gy := clampi(int(pos.y / TILE), 0, GRID_ROWS - sp.y)
+	if not _footprint_free(gx, gy, sp, b):
+		info_text = "That space is occupied."
+		_update_top()
+		return
+	b["gx"] = gx
+	b["gy"] = gy
+	wall.relocate(_building_center(b))
+	queue_redraw()
+
+func _remove_wall(wall) -> void:
+	var cost: int = int(GameData.UNITS[wall.type_id]["cost"])
+	gold += cost
+	if wall.has_meta("bref"):
+		buildings.erase(wall.get_meta("bref"))
+	peasants.erase(wall)
+	wall.queue_free()
+	info_text = "Sold %s (+%dg)." % [GameData.UNITS[wall.type_id]["name"], cost]
 	_build_deploy_ui()
 	_update_top()
 	queue_redraw()
@@ -625,7 +685,7 @@ func get_heal_target(u: Unit):
 			continue
 		if a.hp >= a.max_hp:
 			continue
-		if u.global_position.distance_to(a.global_position) > u.attack_range + a.radius + u.radius:
+		if u.global_position.distance_to(a.global_position) > u.heal_range + a.radius + u.radius:
 			continue
 		var frac: float = a.hp / a.max_hp
 		if frac < best_frac:
@@ -635,6 +695,21 @@ func get_heal_target(u: Unit):
 
 func get_allies(u: Unit) -> Array:
 	return peasants if u.team == 0 else enemies
+
+# --- Wall collision: a solid structure footprint blocks movement (units route around) ---
+func blocking_wall(pos: Vector2, r: float, ignore = null):
+	for p in peasants:
+		if p == ignore or not is_instance_valid(p) or not p.is_structure or p.hp <= 0.0:
+			continue
+		var w: float = p.foot_w if p.foot_w > 0.0 else p.radius * 2.0
+		var h: float = p.foot_h if p.foot_h > 0.0 else p.radius * 2.0
+		var rect := Rect2(p.global_position - Vector2(w, h) * 0.5, Vector2(w, h)).grow(r * 0.6)
+		if rect.has_point(pos):
+			return p
+	return null
+
+func wall_blocks(pos: Vector2, r: float, ignore = null) -> bool:
+	return blocking_wall(pos, r, ignore) != null
 
 func get_backline_peasant():
 	var best = null
@@ -691,20 +766,24 @@ func _unhandled_input(event: InputEvent) -> void:
 			_press_pos = event.position
 			_dragging = false
 			_grab = null
-			if _build_sel == "":
-				# Grabbing a unit lets you drag it (and its group) to a new spot.
-				var u = _peasant_at(event.position)
-				if u != null:
-					_grab = u
-					if not u.selected:
-						_clear_selection()
-						u.selected = true
-						u.queue_redraw()
+			# Grab a unit to drag it (and its group); if none, grab a wall.
+			var u = _peasant_at(event.position)
+			if u != null:
+				_grab = u
+				if not u.selected:
+					_clear_selection()
+					u.selected = true
+					u.queue_redraw()
+			else:
+				_grab = _wall_at(event.position)
 		else:
-			if _build_sel != "":
-				_place_building(event.position)
+			if _grab != null and _grab.is_structure:
+				if _dragging:
+					_move_wall(_grab, event.position)   # drag to reposition
+				else:
+					_remove_wall(_grab)                 # a plain click sells it back
 			elif _dragging and _grab != null:
-				_command_selected_to(event.position)   # drag-move the selected group
+				_command_selected_to(event.position)   # drag-move the selected units
 			elif _dragging:
 				_select_in_rect(Rect2(_press_pos, event.position - _press_pos).abs())
 				queue_redraw()
@@ -717,27 +796,11 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event is InputEventMouseMotion and (event.button_mask & MOUSE_BUTTON_MASK_LEFT):
 		if event.position.distance_to(_press_pos) > 8.0:
 			_dragging = true
-		if _dragging and _grab == null and _build_sel == "":
+		if _dragging and _grab == null:
 			_sel_rect = Rect2(_press_pos, event.position - _press_pos).abs()
 			queue_redraw()
 
 func _handle_click(pos: Vector2) -> void:
-	if _build_sel != "" and phase == Phase.DEPLOY:
-		_place_building(pos)
-		return
-	# Move mode: clicking a placed wall removes it (refunds gold) so you can re-place it.
-	var wall = _wall_at(pos)
-	if wall != null:
-		var cost: int = int(GameData.UNITS[wall.type_id]["cost"])
-		gold += cost
-		if wall.has_meta("bref"):
-			buildings.erase(wall.get_meta("bref"))
-		peasants.erase(wall)
-		wall.queue_free()
-		info_text = "Removed %s (refunded %dg)." % [GameData.UNITS[wall.type_id]["name"], cost]
-		_build_deploy_ui()
-		_update_top()
-		return
 	var u = _peasant_at(pos)
 	if u != null:
 		_clear_selection()
@@ -765,11 +828,16 @@ func _command_selected_to(pos: Vector2) -> void:
 			sel.append(p)
 	if sel.is_empty():
 		return
-	# Snap the target to a grid tile and give each selected unit its own tile.
+	# Snap the target to a grid tile and give each selected unit its own tile,
+	# steering clear of tiles other (non-selected) units already stand on.
 	var max_gx := int((FENCE_X - 1.0) / TILE) if phase == Phase.DEPLOY else GRID_COLS + 14
 	var gx := clampi(int(pos.x / TILE), 0, max_gx)
 	var gy := clampi(int(pos.y / TILE), 0, GRID_ROWS - 1)
-	var tiles := _tiles_around(gx, gy, sel.size(), max_gx)
+	var avoid := {}
+	for p in peasants:
+		if is_instance_valid(p) and not p.is_structure and not p.selected:
+			avoid[Vector2i(int(p.global_position.x / TILE), int(p.global_position.y / TILE))] = true
+	var tiles := _tiles_around(gx, gy, sel.size(), max_gx, avoid)
 	for i in mini(sel.size(), tiles.size()):
 		var t: Vector2i = tiles[i]
 		var cp := Vector2((t.x + 0.5) * TILE, (t.y + 0.5) * TILE)
@@ -779,7 +847,7 @@ func _command_selected_to(pos: Vector2) -> void:
 		sel[i].queue_redraw()
 	_clear_selection()   # a move order deselects the group
 
-func _tiles_around(gx: int, gy: int, count: int, max_gx: int) -> Array:
+func _tiles_around(gx: int, gy: int, count: int, max_gx: int, avoid: Dictionary = {}) -> Array:
 	var res: Array = []
 	var r := 0
 	while res.size() < count and r < 40:
@@ -793,6 +861,8 @@ func _tiles_around(gx: int, gy: int, count: int, max_gx: int) -> Array:
 					continue
 				if _tile_occupied(tx, ty):
 					continue   # skip building footprints
+				if avoid.has(Vector2i(tx, ty)):
+					continue   # skip tiles other units already hold
 				res.append(Vector2i(tx, ty))
 				if res.size() >= count:
 					return res
@@ -989,6 +1059,9 @@ func _guild_card(id: String) -> Control:
 	var btn := Button.new()
 	btn.text = "Sign Contract"
 	btn.pressed.connect(func(): _sign_contract(id))
+	# Keep the unit's stats showing while the pointer is over the button too.
+	btn.mouse_entered.connect(func(): _show_hover(_unit_tooltip(id), pc.global_position + Vector2(0, -118)))
+	btn.mouse_exited.connect(_hide_hover)
 	_style_button(btn)
 	v.add_child(btn)
 	return pc
@@ -1000,26 +1073,16 @@ func _relic_card(id: String) -> Control:
 	var scope_name: String = str(RELIC_SCOPE.get(id, "Everyone"))
 	var pc := PanelContainer.new()
 	pc.add_theme_stylebox_override("panel", _card_style())
-	pc.custom_minimum_size = Vector2(240, 168)   # fixed height so all cards align
-	pc.mouse_filter = Control.MOUSE_FILTER_PASS
-	pc.mouse_entered.connect(func(): _show_hover("%s\n%s\nAffects: %s" % [d["name"], eff, scope_name], pc.global_position + Vector2(0, -96)))
-	pc.mouse_exited.connect(_hide_hover)
+	pc.custom_minimum_size = Vector2(240, 150)   # fixed height so all cards align
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 6)
 	pc.add_child(v)
 
-	var nm := Label.new()
-	nm.text = d["name"]
-	nm.add_theme_color_override("font_color", COL_INK)
-	nm.add_theme_font_size_override("font_size", 16)
-	nm.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	nm.custom_minimum_size = Vector2(212, 0)
-	v.add_child(nm)
-
+	# The effect line is the headline — no need to also spell out a name.
 	var el := Label.new()
 	el.text = eff
-	el.add_theme_color_override("font_color", COL_SOFT)
-	el.add_theme_font_size_override("font_size", 13)
+	el.add_theme_color_override("font_color", COL_INK)
+	el.add_theme_font_size_override("font_size", 16)
 	el.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	el.custom_minimum_size = Vector2(212, 0)
 	v.add_child(el)
@@ -1110,7 +1173,7 @@ func _build_shop_ui() -> void:
 	outer.add_child(head)
 
 	# --- Shop: a few relic cards ---
-	outer.add_child(_section_label("Shop — buy with gold"))
+	outer.add_child(_section_label("Shop"))
 	var srow := HBoxContainer.new()
 	srow.add_theme_constant_override("separation", 14)
 	srow.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
@@ -1240,29 +1303,27 @@ func _build_deploy_ui() -> void:
 	_clear_panel()
 	top_label.visible = true
 
-	# Wave banner, top centre.
+	# Incoming-wave telegraph, centred across the top.
 	var tele := Label.new()
 	tele.text = "Incoming:  " + _wave_summary(battle_num)
-	tele.position = Vector2(ARENA.x * 0.32, 12)
+	tele.size = Vector2(ARENA.x, 24)
+	tele.position = Vector2(0, 12)
+	tele.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	tele.add_theme_font_size_override("font_size", 15)
 	tele.add_theme_color_override("font_color", COL_INK)
 	tele.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.add_child(tele)
 
-	# Building toolbar along the bottom-left (out of the way of unit selection).
-	# Buildings toggle: pick one to place, click it again (or a placed wall) to go back to moving units.
+	# Building toolbar (bottom-left): a button drops the wall onto the field —
+	# then drag it where you want, or click it to sell it back.
 	var names := {"barricade": "Barricade", "spikes": "Spikes", "palisade": "Palisade", "stone_wall": "Stone Wall"}
 	var bx := 16.0
 	var byy := ARENA.y - 50.0
-	if _build_sel != "":
-		var mv := _mk_button("◂ Back to moving units", Vector2(bx, byy), Vector2(210, 36), func(): _set_build_sel(""))
-		bx += 220
 	for id in BUILDING_IDS:
 		var cost: int = GameData.UNITS[id]["cost"]
-		var mark := "  ◂ placing" if _build_sel == id else ""
-		var b := _mk_button("%s %dg%s" % [names[id], cost, mark], Vector2(bx, byy), Vector2(150, 36), func(): _set_build_sel(id if _build_sel != id else ""))
+		var b := _mk_button("%s  %dg" % [names[id], cost], Vector2(bx, byy), Vector2(150, 36), func(): _buy_and_place(id))
 		var bd: Dictionary = GameData.UNITS[id]
-		var btip := "%s  (1×2 tile)\nHealth: %d  ·  Armor: %d\nA wall enemies must destroy to pass." % [bd["name"], int(bd["hp"]), int(bd.get("armor", 0))]
+		var btip := "%s\nHealth: %d  ·  Armor: %d\nDrag to move · click to sell." % [bd["name"], int(bd["hp"]), int(bd.get("armor", 0))]
 		b.mouse_entered.connect(func(): _show_hover(btip, b.global_position + Vector2(0, -100)))
 		b.mouse_exited.connect(_hide_hover)
 		b.disabled = gold < cost
@@ -1292,10 +1353,10 @@ func _build_roster_label() -> void:
 		comp[id] = int(comp.get(id, 0)) + 1
 	var atext := "Your forces\n"
 	for id in comp:
-		atext += "  %d  %s\n" % [comp[id], GameData.UNITS[id]["name"]]
+		atext += "  %d  %s\n" % [comp[id], _plural(GameData.UNITS[id]["name"], comp[id])]
 	var al := Label.new()
 	al.text = atext
-	al.position = Vector2(ARENA.x - 260, 84)
+	al.position = Vector2(16, 84)
 	al.add_theme_font_size_override("font_size", 15)
 	al.add_theme_color_override("font_color", COL_INK)
 	al.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1357,7 +1418,7 @@ func _update_hover() -> void:
 	var mp := get_global_mouse_position()
 	var found = null
 	for u in peasants:
-		if is_instance_valid(u) and u.hp > 0.0 and mp.distance_to(u.global_position) <= u.radius + 5.0:
+		if is_instance_valid(u) and u.hp > 0.0 and not u.invulnerable and mp.distance_to(u.global_position) <= u.radius + 5.0:
 			found = u
 			break
 	if found == null:
@@ -1368,16 +1429,23 @@ func _update_hover() -> void:
 	if found == null:
 		hover_label.visible = false
 		return
-	var rng: float = found.attack_range
-	var side := "Your unit" if found.team == 0 else "Enemy"
-	var txt := "%s (%s)\nHP: %d / %d" % [found.display_name, side, int(ceil(found.hp)), int(found.max_hp)]
-	if found.damage > 0.0:
-		txt += "\nDamage: %d\nAtk speed: %.1f / s" % [int(found.damage), 1.0 / maxf(found.attack_cooldown, 0.01)]
-	txt += "\nRange: %s" % ("melee" if rng <= 12.0 else str(int(rng)))
-	if found.armor > 0.0:
-		txt += "\nArmor: %d" % int(found.armor)
-	if found.heals:
-		txt += "\nHeals allies"
+	var txt := ""
+	if found.is_structure:
+		# Walls/keep: just the name and how much punishment it can take.
+		txt = "%s\nHealth: %d / %d" % [found.display_name, int(ceil(found.hp)), int(found.max_hp)]
+		if found.armor > 0.0:
+			txt += "\nArmor: %d" % int(found.armor)
+	else:
+		var rng: float = found.attack_range
+		var side := "Your unit" if found.team == 0 else "Enemy"
+		txt = "%s (%s)\nHP: %d / %d" % [found.display_name, side, int(ceil(found.hp)), int(found.max_hp)]
+		if found.damage > 0.0:
+			txt += "\nDamage: %d\nAtk speed: %.1f / s" % [int(found.damage), 1.0 / maxf(found.attack_cooldown, 0.01)]
+		txt += "\nRange: %s" % ("melee" if rng <= 12.0 else str(int(rng)))
+		if found.armor > 0.0:
+			txt += "\nArmor: %d" % int(found.armor)
+		if found.heals:
+			txt += "\nHeals allies · light attack"
 	hover_label.text = txt
 	hover_label.position = mp + Vector2(14, 12)
 	hover_label.visible = true
@@ -1465,25 +1533,13 @@ func _hide_hover() -> void:
 		hover_label.visible = false
 
 func _refresh_relic_dock() -> void:
+	# The on-field relic dock was clutter and couldn't be hovered mid-battle;
+	# relics still apply, they're just not drawn on the battlefield anymore.
 	if relic_dock == null:
 		return
 	for c in relic_dock.get_children():
 		c.queue_free()
-	for r in relics:
-		var dot := Panel.new()
-		dot.custom_minimum_size = Vector2(28, 28)
-		var st := StyleBoxFlat.new()
-		st.bg_color = Color(0.12, 0.10, 0.05, 0.92)
-		st.border_color = COL_GOLD
-		st.set_border_width_all(2)
-		st.set_corner_radius_all(14)
-		dot.add_theme_stylebox_override("panel", st)
-		dot.mouse_filter = Control.MOUSE_FILTER_STOP
-		var rid: String = r
-		var tip := "%s\n%s\nAffects: %s" % [RELIC_DEFS[rid]["name"], str(RELIC_DEFS[rid].get("effect", "")), str(RELIC_SCOPE.get(rid, "Everyone"))]
-		dot.mouse_entered.connect(func(): _show_hover(tip, dot.global_position + Vector2(-180, 0)))
-		dot.mouse_exited.connect(_hide_hover)
-		relic_dock.add_child(dot)
+	relic_dock.visible = false
 
 # ---------------------------------------------------------------- helpers / background
 
@@ -1508,17 +1564,22 @@ func _draw() -> void:
 				draw_rect(r, Color(1, 0.6, 0.2, 0.14) if _tile_occupied(gx, gy) else Color(1, 1, 1, 0.04))
 				draw_rect(r, Color(1, 1, 1, 0.10), false, 1.0)
 
-	# Building names, and the church's running fallen count.
+	# Only the keep and church carry a permanent label — the church above it and
+	# the keep below, so their names never collide. Walls stay unlabelled (hover
+	# shows their name and health instead).
 	if phase == Phase.DEPLOY or phase == Phase.BATTLE:
 		var font := ThemeDB.fallback_font
 		if font != null:
+			var col := Color(0.97, 0.94, 0.8)
 			for p in peasants:
 				if not is_instance_valid(p) or not p.is_structure:
 					continue
-				var nm: String = p.display_name
+				var half_h: float = (p.foot_h if p.foot_h > 0.0 else p.radius * 2.0) * 0.5
 				if p.type_id == "church":
-					nm = "Church  ×%d fallen" % total_fallen
-				draw_string(font, p.global_position + Vector2(-p.radius, p.radius + 15.0), nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.97, 0.94, 0.8))
+					var ch := "×%d fallen" % total_fallen
+					draw_string(font, Vector2(p.global_position.x - 80.0, p.global_position.y - half_h - 6.0), ch, HORIZONTAL_ALIGNMENT_CENTER, 160.0, 13, col)
+				elif p.type_id == "castle":
+					draw_string(font, Vector2(p.global_position.x - 80.0, p.global_position.y + half_h + 18.0), "Castle Keep", HORIZONTAL_ALIGNMENT_CENTER, 160.0, 13, col)
 
 	if _dragging:
 		draw_rect(_sel_rect, Color(1, 1, 0.4, 0.12))

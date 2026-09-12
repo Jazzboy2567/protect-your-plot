@@ -6,6 +6,7 @@ extends Node2D
 
 const ENGAGE_RADIUS := 120.0          # how far a unit chases a foe that nears its post
 const AGGRO_RADIUS := 95.0            # a foe this close to the unit itself is engaged, wherever it strays
+const NEIGHBOR_DIST := 62.0           # social aggro: a foe a comrade this close is fighting, I fight too
 
 var main = null                       # reference to Main (owns the unit arrays)
 var team: int = 0                     # 0 = peasant, 1 = enemy
@@ -41,6 +42,7 @@ var crit_chance: float = 0.0          # 0..1 chance to crit
 var crit_mult: float = 1.5            # crit damage multiplier
 var heals: bool = false               # attacks heal the most-hurt nearby ally
 var heal_amount: float = 0.0
+var heal_range: float = 0.0           # reach for healing (longer than the attack range)
 var evasion: float = 0.0              # 0..1 chance to dodge a hit (rare)
 var targets: String = ""             # "" units; "structures" = go for walls/castle
 
@@ -53,6 +55,9 @@ var _spread_cd: float = 0.0
 
 var command_point: Vector2 = Vector2.ZERO   # where you've ordered this unit to hold
 var _home := Vector2(INF, INF)               # structures lock here — nothing can shove them
+var engaging: bool = false                   # currently committed to a foe (drives social aggro)
+var attacker = null                          # who last hit me (so comrades can rally to a struck wall)
+var attacker_time: float = 0.0               # seconds the call-for-help stays warm
 var selected: bool = false
 var target = null
 var _cd: float = 0.0
@@ -89,6 +94,7 @@ func setup(def: Dictionary, _team: int, _main) -> void:
 	behavior = def.get("behavior", "")
 	heals = bool(def.get("heals", false))
 	heal_amount = float(def.get("heal_amount", 0))
+	heal_range = float(def.get("heal_range", attack_range))
 	evasion = float(def.get("evasion", 0))
 	targets = def.get("targets", "")
 	body_color = def.get("color", Color(0.78, 0.80, 0.85))
@@ -102,9 +108,22 @@ func _process(delta: float) -> void:
 			_home = global_position
 		elif global_position != _home:
 			global_position = _home
+	if attacker_time > 0.0:
+		attacker_time -= delta
 	if _flash > 0.0:
 		_flash -= delta
 		queue_redraw()
+
+# Move a structure to a new spot and re-pin it there (used when the player drags a wall).
+func relocate(pos: Vector2) -> void:
+	global_position = pos
+	command_point = pos
+	_home = pos
+
+# Remember who just struck me so nearby allies can rally to my defence.
+func note_attacker(who) -> void:
+	attacker = who
+	attacker_time = 1.0
 
 func _physics_process(delta: float) -> void:
 	if _dead or is_structure or main == null:
@@ -135,11 +154,16 @@ func _physics_process(delta: float) -> void:
 			die()
 			return
 
-	# Acquire / re-acquire a target.
-	if target == null or not is_instance_valid(target) or target.hp <= 0.0:
+	# --- Acquire / re-acquire a target ---
+	if team == 0 and heals:
+		# Herbalist: mend the most-hurt ally in range; if nobody needs it, poke the nearest foe.
+		var ht = main.get_heal_target(self)
+		target = ht if ht != null else main.get_nearest_enemy(self)
+	elif target == null or not is_instance_valid(target) or target.hp <= 0.0 or (team == 0 and target.team == team):
+		# Commit to a target until it dies; only re-pick when it's gone.
 		target = null
 		if team == 0:
-			target = main.get_heal_target(self) if heals else main.get_nearest_enemy(self)
+			target = main.get_nearest_enemy(self)
 		else:
 			if behavior == "diver":
 				target = main.get_backline_peasant()
@@ -154,17 +178,18 @@ func _physics_process(delta: float) -> void:
 		if wall != null:
 			target = wall
 
-	# Single ally pass: light separation + collect nearby aura effects.
+	# --- Single ally pass: separation, auras, and a social-aggro candidate ---
 	var sep := Vector2.ZERO
 	var haste := 0.0
 	var heal_rate := 0.0
+	var social = null   # a foe a nearby comrade (or a struck wall) is dealing with
 	for a in main.get_allies(self):
-		if a == self:
+		if a == self or not is_instance_valid(a):
 			continue
 		var d: Vector2 = global_position - a.global_position
 		var dl := d.length()
 		var mind: float = radius + a.radius + 2.0
-		if dl > 0.001 and dl < mind:
+		if dl > 0.001 and dl < mind and not a.is_structure:
 			sep += d / dl * (mind - dl)
 		if a.aura != "" and dl <= a.aura_range:
 			if a.aura == "haste":
@@ -174,23 +199,44 @@ func _physics_process(delta: float) -> void:
 			elif a.aura == "cleanse" and plague_time > 0.0:
 				plague_time = 0.0
 				queue_redraw()
+		# Social aggro (fighting units only): rally to a comrade already engaged,
+		# or to a wall/keep currently under attack, if it's about a tile away.
+		if team == 0 and not heals and social == null:
+			var near_thr: float = NEIGHBOR_DIST + (a.radius if a.is_structure else 0.0)
+			if dl <= near_thr:
+				if a.is_structure and a.attacker_time > 0.0 and is_instance_valid(a.attacker) and a.attacker.team == 1 and a.attacker.hp > 0.0:
+					social = a.attacker
+				elif a.engaging and is_instance_valid(a.target) and a.target.team == 1:
+					social = a.target
 	if sep != Vector2.ZERO:
 		global_position += sep * 0.5
 	if heal_rate > 0.0 and hp < max_hp:
 		hp = minf(max_hp, hp + heal_rate * delta)
 		queue_redraw()
 
+	# --- Decide engagement (your non-healer units drive & spread social aggro) ---
+	engaging = false
+	if team == 0 and not heals and is_instance_valid(target) and target.team == 1:
+		var td := global_position.distance_to(target.global_position)
+		if td <= AGGRO_RADIUS or target.global_position.distance_to(command_point) <= ENGAGE_RADIUS:
+			engaging = true
+		elif social != null:
+			target = social
+			engaging = true
+
 	var has_t: bool = target != null and is_instance_valid(target)
+	var healing: bool = heals and has_t and target.team == team
+	var eff_range: float = heal_range if healing else attack_range
 	var dist: float = INF
-	var reach: float = attack_range + radius
+	var reach: float = eff_range + radius
 	if has_t:
 		dist = global_position.distance_to(target.global_position)
-		reach = attack_range + radius + target.radius
+		reach = eff_range + radius + target.radius
 
 	# Act on whatever is in range: healers mend a hurt ally, everyone else strikes.
 	if has_t and dist <= reach and _cd <= 0.0:
 		_cd = attack_cooldown / (1.0 + haste)
-		if heals:
+		if healing:
 			target.hp = minf(target.max_hp, target.hp + heal_amount)
 			target.queue_redraw()
 			if main:
@@ -202,6 +248,8 @@ func _physics_process(delta: float) -> void:
 			var is_crit := crit_chance > 0.0 and randf() < crit_chance
 			if is_crit:
 				dmg *= crit_mult
+			if team == 1:
+				target.note_attacker(self)
 			target.take_damage(dmg * main.damage_mult(team), pierce, is_crit)
 			if applies_burn:
 				target.ignite(3.0, 3.0)
@@ -213,33 +261,53 @@ func _physics_process(delta: float) -> void:
 				if kl > 0.001:
 					target.global_position += kb / kl * knockback
 
-	# Move toward the goal (hold the command point; enemies advance).
+	# Move toward the goal, routing around walls instead of through them.
 	var goal = _movement_goal(has_t, dist, reach)
 	if goal != null:
-		var dir: Vector2 = goal - global_position
-		var dl2 := dir.length()
-		if dl2 > 0.001:
-			var spd := move_speed * (0.5 if slow_time > 0.0 else 1.0)
-			global_position += dir / dl2 * spd * delta
+		var spd := move_speed * (0.5 if slow_time > 0.0 else 1.0)
+		_step_toward(goal, spd * delta)
 
 func _movement_goal(has_t: bool, dist: float, reach: float):
 	# Enemies always advance on the nearest target.
 	if team == 1:
 		return target.global_position if (has_t and dist > reach) else null
-	# Already in striking range: stand and fight.
+	# Already in striking (or healing) range: stand and act.
 	if has_t and dist <= reach:
 		return null
-	# Otherwise hold the post, but rush any foe threatening my post OR standing
-	# next to me — so an enemy that breaches the line gets swarmed by every
-	# ally around it, not just the one whose post it happened to reach.
-	if has_t:
-		var near_post: bool = target.global_position.distance_to(command_point) <= ENGAGE_RADIUS
-		var near_me: bool = dist <= AGGRO_RADIUS
-		if near_post or near_me:
-			return target.global_position
+	# Committed to a foe (directly, socially, or via a struck wall) — or a
+	# healer moving to a hurt ally: close the distance. Otherwise hold post.
+	if has_t and (engaging or (heals and target.team == team)):
+		return target.global_position
 	if global_position.distance_to(command_point) > 8.0:
 		return command_point
 	return null
+
+# Advance toward a goal but never walk through a wall: if the direct step is
+# blocked, slide along the wall toward the end nearest the goal to round it.
+func _step_toward(goal: Vector2, maxd: float) -> void:
+	var to_goal: Vector2 = goal - global_position
+	var dl := to_goal.length()
+	if dl < 0.001:
+		return
+	var step: Vector2 = to_goal / dl * minf(maxd, dl)
+	var nxt: Vector2 = global_position + step
+	if main == null or not main.wall_blocks(nxt, radius, self):
+		global_position = nxt
+		return
+	var b = main.blocking_wall(nxt, radius, self)
+	var vy := 1.0
+	if b != null:
+		var half_h: float = (b.foot_h if b.foot_h > 0.0 else b.radius * 2.0) * 0.5
+		var top: float = b.global_position.y - half_h
+		var bot: float = b.global_position.y + half_h
+		vy = -1.0 if absf(goal.y - top) <= absf(goal.y - bot) else 1.0
+	else:
+		vy = -1.0 if goal.y < global_position.y else 1.0
+	var slide: Vector2 = Vector2(0, vy) * maxd
+	if not main.wall_blocks(global_position + slide, radius, self):
+		global_position += slide
+	elif not main.wall_blocks(global_position - slide, radius, self):
+		global_position -= slide
 
 func take_damage(amount: float, pierce_flag: bool = false, is_crit: bool = false) -> void:
 	if _dead or invulnerable:

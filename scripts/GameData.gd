@@ -13,7 +13,7 @@ const UNITS := {
 	"archer":     {"id":"archer","name":"Archer","hp":24,"damage":8,"range":150,"cooldown":1.1,"speed":50,"radius":7,"cost":25,"color":Color(0.60,0.80,0.62)},
 	"woodcutter": {"id":"woodcutter","name":"Woodcutter","hp":65,"damage":15,"range":9,"cooldown":1.4,"speed":45,"radius":9,"cost":35,"pierce":true,"color":Color(0.72,0.62,0.50)},
 	"hunter":     {"id":"hunter","name":"Hunter","hp":30,"damage":7,"range":130,"cooldown":1.0,"speed":55,"radius":7,"cost":30,"bonus_beast":2.2,"color":Color(0.55,0.70,0.45)},
-	"herbalist":  {"id":"herbalist","name":"Herbalist","hp":30,"damage":0,"range":95,"cooldown":1.3,"speed":52,"radius":8,"cost":35,"heals":true,"heal_amount":10,"color":Color(0.55,0.80,0.70)},
+	"herbalist":  {"id":"herbalist","name":"Herbalist","hp":30,"damage":5,"range":70,"cooldown":1.3,"speed":52,"radius":8,"cost":35,"heals":true,"heal_range":95,"heal_amount":10,"color":Color(0.55,0.80,0.70)},
 	"fisherman":  {"id":"fisherman","name":"Fisherman","hp":38,"damage":5,"range":9,"cooldown":1.1,"speed":55,"radius":8,"cost":30,"applies_slow":true,"color":Color(0.55,0.72,0.80)},
 	"torchbearer":{"id":"torchbearer","name":"Torchbearer","hp":34,"damage":6,"range":8,"cooldown":1.0,"speed":55,"radius":8,"cost":35,"applies_burn":true,"color":Color(0.90,0.65,0.35)},
 	"baker":      {"id":"baker","name":"Baker","hp":34,"damage":4,"range":7,"cooldown":1.2,"speed":52,"radius":8,"cost":30,"aura":"heal","aura_range":95,"aura_value":5,"color":Color(0.86,0.78,0.55)},
