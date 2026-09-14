@@ -44,7 +44,7 @@ const MAX_CONTRACTS := 4
 const TILE := 36.0
 const GRID_COLS := 10
 const GRID_ROWS := 18
-const CASTLE_GX := 2
+const CASTLE_GX := 3
 const CASTLE_GY := 7
 const CASTLE_SPAN := 3
 
@@ -316,7 +316,7 @@ func _win_battle() -> void:
 	var tax := 10 + 2 * survivors
 	gold += tax
 	info_text = "Victory! Tax +%dg. Survivors: %d" % [tax, survivors]
-	flash_banner("Battle %d won!  +%dg" % [battle_num, tax], Color(0.5, 0.95, 0.5))
+	flash_banner("Wave %d survived!  +%dg" % [battle_num, tax], Color(0.5, 0.95, 0.5))
 
 	# Persist surviving units AND their positions so the layout carries over.
 	var new_army: Array = []
@@ -329,24 +329,63 @@ func _win_battle() -> void:
 	army = new_army
 	formation = new_formation
 
-	# A surviving Church revives one fallen unit for the next battle.
+	# A surviving Church revives one fallen unit. If several *kinds* fell, let the
+	# player choose which to bring back; if only one kind fell, revive it silently.
 	if _has_building("church") and not dead_this_battle.is_empty():
-		var revived: String = dead_this_battle[0]
-		army.append(revived)
-		total_fallen = maxi(0, total_fallen - 1)
-		flash_banner("The church revives a %s." % GameData.UNITS[revived]["name"], Color(0.8, 0.9, 1))
+		var kinds: Array = []
+		for d in dead_this_battle:
+			if not (d in kinds):
+				kinds.append(d)
+		if kinds.size() > 1:
+			_show_revive_choice(kinds)
+			return
+		_do_revive(kinds[0])
+	_after_win()
 
+func _do_revive(id: String) -> void:
+	army.append(id)
+	total_fallen = maxi(0, total_fallen - 1)
+	flash_banner("The church revives a %s." % GameData.UNITS[id]["name"], Color(0.8, 0.9, 1))
+
+func _after_win() -> void:
 	battle_num += 1
 	if battle_num > MAX_BATTLES:
 		_win_game()
 	else:
 		show_shop()
 
+func _show_revive_choice(kinds: Array) -> void:
+	phase = Phase.SHOP
+	_clear_panel()
+	top_label.visible = true
+	_add_backdrop(0.85)
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(center)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 12)
+	center.add_child(box)
+	var head := Label.new()
+	head.text = "The church can revive one of the fallen — choose:"
+	head.add_theme_font_size_override("font_size", 20)
+	head.add_theme_color_override("font_color", COL_GOLD)
+	head.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(head)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 12)
+	row.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	box.add_child(row)
+	for id in kinds:
+		var b := _menu_button(GameData.UNITS[id]["name"], func(): _do_revive(id); _after_win())
+		b.custom_minimum_size = Vector2(160, 44)
+		row.add_child(b)
+
 func _lose_battle() -> void:
 	phase = Phase.GAMEOVER
 	_clear_panel()
 	var lbl := Label.new()
-	lbl.text = "Your plot has fallen.\nYou held until Battle %d." % battle_num
+	lbl.text = "Your plot has fallen.\nYou held until Wave %d." % battle_num
 	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	lbl.position = Vector2(ARENA.x / 2.0 - 160.0, 210.0)
 	lbl.size = Vector2(320, 80)
@@ -1039,23 +1078,29 @@ func _guild_card(id: String) -> Control:
 	pc.mouse_exited.connect(_hide_hover)
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 6)
+	v.mouse_filter = Control.MOUSE_FILTER_IGNORE   # let the whole card own the hover
 	pc.add_child(v)
 	var gl := Label.new()
 	gl.text = str(GUILD_NAMES.get(id, "Guild")).to_upper()
 	gl.add_theme_color_override("font_color", COL_GOLD)
 	gl.add_theme_font_size_override("font_size", 11)
+	gl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	v.add_child(gl)
 	var nm := Label.new()
 	nm.text = d["name"]
 	nm.add_theme_color_override("font_color", COL_INK)
 	nm.add_theme_font_size_override("font_size", 22)
+	nm.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	v.add_child(nm)
 	var sp := Label.new()
 	sp.text = str(SPECIALTY.get(id, ""))
 	sp.add_theme_color_override("font_color", COL_INK)
 	sp.add_theme_font_size_override("font_size", 14)
+	sp.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	v.add_child(sp)
-	v.add_child(HSeparator.new())
+	var hs := HSeparator.new()
+	hs.mouse_filter = Control.MOUSE_FILTER_IGNORE   # the bar no longer steals the hover
+	v.add_child(hs)
 	var btn := Button.new()
 	btn.text = "Sign Contract"
 	btn.pressed.connect(func(): _sign_contract(id))
@@ -1248,7 +1293,7 @@ func _build_shop_ui() -> void:
 			pal.add_child(b)
 
 	outer.add_child(HSeparator.new())
-	var dep := _menu_button("Deploy for Battle %d  >>" % battle_num, start_deploy)
+	var dep := _menu_button("Deploy for Wave %d  >>" % battle_num, start_deploy)
 	dep.custom_minimum_size = Vector2(300, 46)
 	dep.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_style_green_button(dep)
@@ -1259,7 +1304,7 @@ func _build_predeploy_ui() -> void:
 	_clear_panel()
 	top_label.visible = false
 	_add_backdrop(0.5)
-	_shop_header("Battle %d/%d   ·   Gold %d" % [battle_num, MAX_BATTLES, gold], 24, 20)
+	_shop_header("Wave %d/%d   ·   Gold %d" % [battle_num, MAX_BATTLES, gold], 24, 20)
 
 	# Roster list on the left (units only — buildings aren't "forces").
 	var comp := {}
@@ -1278,7 +1323,7 @@ func _build_predeploy_ui() -> void:
 		panel.add_child(l)
 		y += 30
 
-	var dep := _mk_button("Deploy for Battle %d  >>" % battle_num, Vector2(ARENA.x - 350, ARENA.y - 92), Vector2(320, 58), start_deploy)
+	var dep := _mk_button("Deploy for Wave %d  >>" % battle_num, Vector2(ARENA.x - 350, ARENA.y - 92), Vector2(320, 58), start_deploy)
 	_style_green_button(dep)
 
 func _shop_header(text: String, x: float, y: float) -> void:
@@ -1346,21 +1391,32 @@ func _build_battle_ui() -> void:
 	top_label.visible = true
 
 func _build_roster_label() -> void:
+	# Bottom-left tally, styled like the Gold/Income HUD: peasants white, each
+	# specialist in its own colour.
 	var comp := {}
+	var order: Array = []
 	for id in army:
 		if GameData.UNITS[id].get("structure", false):
 			continue   # buildings aren't "forces"
+		if not comp.has(id):
+			order.append(id)
 		comp[id] = int(comp.get(id, 0)) + 1
-	var atext := "Your forces\n"
-	for id in comp:
-		atext += "  %d  %s\n" % [comp[id], _plural(GameData.UNITS[id]["name"], comp[id])]
-	var al := Label.new()
-	al.text = atext
-	al.position = Vector2(16, 84)
-	al.add_theme_font_size_override("font_size", 15)
-	al.add_theme_color_override("font_color", COL_INK)
-	al.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.add_child(al)
+	var s := "[b][color=#e8dcbe]Your forces[/color][/b]\n"
+	for id in order:
+		var hexcol: String = "ffffff" if id == "peasant" else GameData.UNITS[id]["color"].to_html(false)
+		s += "[color=#%s]%d  %s[/color]\n" % [hexcol, comp[id], _plural(GameData.UNITS[id]["name"], comp[id])]
+	var rl := RichTextLabel.new()
+	rl.bbcode_enabled = true
+	rl.text = s
+	rl.fit_content = true
+	rl.scroll_active = false
+	rl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	rl.add_theme_font_size_override("normal_font_size", 15)
+	rl.add_theme_font_size_override("bold_font_size", 15)
+	var h: float = float(order.size() + 1) * 22.0 + 8.0
+	rl.size = Vector2(230, h)
+	rl.position = Vector2(16, ARENA.y - 66.0 - h)   # sit just above the wall toolbar
+	panel.add_child(rl)
 
 func _mk_button(text: String, pos: Vector2, size: Vector2, cb: Callable) -> Button:
 	var b := Button.new()
@@ -1406,7 +1462,7 @@ func _update_top() -> void:
 		if id in PEASANT_IDS or id in SPECIALIST_IDS:
 			units += 1
 	var income := 10 + 2 * units
-	var s := "[b][color=#f2ab2e]Gold  %d[/color]\n[color=#8fd06a]Income  +%d/turn[/color]\n[color=#e8dcbe]Battle  %d/%d[/color][/b]" % [gold, income, battle_num, MAX_BATTLES]
+	var s := "[b][color=#f2ab2e]Gold  %d[/color]\n[color=#8fd06a]Income  +%d/turn[/color]\n[color=#e8dcbe]Wave  %d/%d[/color][/b]" % [gold, income, battle_num, MAX_BATTLES]
 	if phase == Phase.BATTLE:
 		s += "\n[color=#cfc6ad]Units %d · Enemies %d[/color]" % [peasants.size(), enemies.size()]
 	# Transient messages only clutter the menus, not the battlefield HUD.
