@@ -16,17 +16,6 @@ const FENCE_X := 357.0
 const PEASANT_IDS := ["peasant"]
 const SPECIALIST_IDS := ["archer", "woodcutter", "hunter", "herbalist", "fisherman", "torchbearer", "baker", "monk"]
 const BUILDING_IDS := ["barricade", "spikes", "palisade", "stone_wall"]
-const GUILD_NAMES := {
-	"archer": "Archers' Guild", "woodcutter": "Woodsmen", "hunter": "Hunters' Lodge",
-	"herbalist": "Apothecary", "fisherman": "Wharf", "torchbearer": "Wharf",
-	"baker": "Bakers' Row", "monk": "Abbey",
-}
-const SPECIALTY := {
-	"archer": "Longest range", "woodcutter": "Pierces armor",
-	"hunter": "Double damage vs beasts", "herbalist": "Heals your units",
-	"fisherman": "Slows enemies on hit", "torchbearer": "Burns enemies on hit",
-	"baker": "Heal aura to nearby allies", "monk": "Attack-speed aura to nearby allies",
-}
 
 # ---- Key palette: black/dark ground, gold-orange accent, cream text ----
 const COL_PANEL := Color(0.11, 0.095, 0.065)
@@ -48,34 +37,6 @@ const CASTLE_GX := 3
 const CASTLE_GY := 7
 const CASTLE_SPAN := 3
 
-# Run-wide passive upgrades (buy once, from the Traveling Merchant every 4th battle).
-const RELIC_DEFS := {
-	"sharp_tools":      {"name": "Sharpened Tools", "cost": 60, "effect": "+25% damage"},
-	"village_bell":     {"name": "Village Bell", "cost": 60, "effect": "+20% attack speed"},
-	"blacksmith_forge": {"name": "Blacksmith's Forge", "cost": 55, "effect": "+3 armor"},
-	"full_granary":     {"name": "Full Granary", "cost": 50, "effect": "+2 free peasants each battle"},
-	"fortifier":        {"name": "Fortifier", "cost": 45, "effect": "Walls +80% HP"},
-	"longbows":         {"name": "Longbows", "cost": 45, "effect": "Archer range +40, damage +3"},
-	"shields":          {"name": "Shields", "cost": 40, "effect": "Peasant armor +2"},
-	"sharpened_axes":   {"name": "Sharpened Axes", "cost": 40, "effect": "Woodcutter damage +8"},
-	"keen_edge":        {"name": "Keen Edge", "cost": 55, "effect": "+15% crit chance"},
-	"warhorn":          {"name": "War Horn", "cost": 50, "effect": "+15% attack speed"},
-	"swift_boots":      {"name": "Swift Boots", "cost": 40, "effect": "+20% move speed"},
-	"iron_rations":     {"name": "Iron Rations", "cost": 50, "effect": "+25% max HP"},
-	"hawk_eye":         {"name": "Hawk Eye", "cost": 45, "effect": "Ranged range +30"},
-	"berserkers_brew":  {"name": "Berserker's Brew", "cost": 55, "effect": "+40% damage, -15% HP"},
-}
-# Who each relic buffs (shown as a category tag on the item).
-const RELIC_SCOPE := {
-	"sharp_tools": "Everyone", "village_bell": "Everyone", "blacksmith_forge": "Everyone",
-	"full_granary": "Peasants", "fortifier": "Walls", "longbows": "Archers", "shields": "Peasants",
-	"sharpened_axes": "Woodcutters", "keen_edge": "Everyone", "warhorn": "Everyone",
-	"swift_boots": "Everyone", "iron_rations": "Everyone", "hawk_eye": "Ranged", "berserkers_brew": "Everyone",
-}
-# Class-specific relics only appear once you've contracted a matching unit.
-const RELIC_REQUIRES := {
-	"longbows": ["archer"], "sharpened_axes": ["woodcutter"], "hawk_eye": ["archer", "hunter"],
-}
 
 var gold: int = START_GOLD
 var battle_num: int = 1
@@ -238,10 +199,10 @@ func show_shop() -> void:
 
 func _make_shop_offer() -> Array:
 	var pool: Array = []
-	for id in RELIC_DEFS:
+	for id in GameData.RELIC_DEFS:
 		if id in relics:
 			continue
-		var req: Array = RELIC_REQUIRES.get(id, [])
+		var req: Array = GameData.RELIC_REQUIRES.get(id, [])
 		if not req.is_empty():
 			var ok := false
 			for c in req:
@@ -1241,8 +1202,8 @@ func _unit_tooltip(id: String) -> String:
 	lines.append("Range: %s" % ("melee" if rng <= 12.0 else str(int(rng))))
 	if float(d.get("armor", 0)) > 0.0:
 		lines.append("Armor: %d" % int(d["armor"]))
-	if SPECIALTY.has(id):
-		lines.append(str(SPECIALTY[id]))
+	if GameData.SPECIALTY.has(id):
+		lines.append(str(GameData.SPECIALTY[id]))
 	return "\n".join(lines)
 
 func _guild_card(id: String) -> Control:
@@ -1258,7 +1219,7 @@ func _guild_card(id: String) -> Control:
 	v.mouse_filter = Control.MOUSE_FILTER_IGNORE   # let the whole card own the hover
 	pc.add_child(v)
 	var gl := Label.new()
-	gl.text = str(GUILD_NAMES.get(id, "Guild")).to_upper()
+	gl.text = str(GameData.GUILD_NAMES.get(id, "Guild")).to_upper()
 	gl.add_theme_color_override("font_color", COL_GOLD)
 	gl.add_theme_font_size_override("font_size", 11)
 	gl.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1270,7 +1231,7 @@ func _guild_card(id: String) -> Control:
 	nm.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	v.add_child(nm)
 	var sp := Label.new()
-	sp.text = str(SPECIALTY.get(id, ""))
+	sp.text = str(GameData.SPECIALTY.get(id, ""))
 	sp.add_theme_color_override("font_color", COL_INK)
 	sp.add_theme_font_size_override("font_size", 14)
 	sp.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1289,10 +1250,10 @@ func _guild_card(id: String) -> Control:
 	return pc
 
 func _relic_card(id: String) -> Control:
-	var d: Dictionary = RELIC_DEFS[id]
+	var d: Dictionary = GameData.RELIC_DEFS[id]
 	var cost: int = int(d["cost"])
 	var eff: String = str(d.get("effect", ""))
-	var scope_name: String = str(RELIC_SCOPE.get(id, "Everyone"))
+	var scope_name: String = str(GameData.RELIC_SCOPE.get(id, "Everyone"))
 	var pc := PanelContainer.new()
 	pc.add_theme_stylebox_override("panel", _card_style())
 	pc.custom_minimum_size = Vector2(240, 150)   # fixed height so all cards align
@@ -1694,11 +1655,11 @@ func _unrecruit(i: int) -> void:
 func _buy_relic(id: String) -> void:
 	if id in relics:
 		return
-	var cost: int = int(RELIC_DEFS[id]["cost"])
+	var cost: int = int(GameData.RELIC_DEFS[id]["cost"])
 	if gold >= cost:
 		gold -= cost
 		relics.append(id)
-		info_text = "Acquired %s." % RELIC_DEFS[id]["name"]
+		info_text = "Acquired %s." % GameData.RELIC_DEFS[id]["name"]
 		_refresh_relic_dock()
 	else:
 		info_text = "Not enough gold."
