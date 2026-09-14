@@ -115,11 +115,15 @@ var relic_dock: VBoxContainer
 var _speed_i: int = 0
 const SPEEDS := [1.0, 2.0, 3.0]
 
-# RTS selection state
+# RTS selection / drag state
 var _press_pos: Vector2 = Vector2.ZERO
 var _dragging: bool = false
 var _sel_rect: Rect2 = Rect2()
-var _grab = null   # unit grabbed on mouse-down, for click-drag movement
+var _grab = null                    # unit or wall grabbed on mouse-down
+var _drag_units: Array = []         # the group of units being dragged together
+var _drag_origins: Dictionary = {}  # node -> original global_position (for reset)
+var _buy_id: String = ""            # wall id being placed via a ghost (drag-to-buy)
+var _mouse: Vector2 = Vector2.ZERO  # latest pointer position (for drag previews)
 
 func _ready() -> void:
 	world = Node2D.new()
@@ -455,7 +459,12 @@ func _spawn_peasants() -> void:
 		if pos == null:
 			need += 1
 	var max_gx := int((FENCE_X - 1.0) / TILE)
-	var tiles := _tiles_around(6, 3, need, max_gx)
+	# Tiles already claimed by units keeping their saved spot — don't spawn onto them.
+	var avoid := {}
+	for pl in placements:
+		if pl != null:
+			avoid[Vector2i(int(pl.x / TILE), int(pl.y / TILE))] = true
+	var tiles := _tiles_around(7, 8, need, max_gx, avoid)   # start just right of the keep
 	var ti := 0
 	for i in ids.size():
 		var u := _make_unit(ids[i], 0)
@@ -463,7 +472,7 @@ func _spawn_peasants() -> void:
 		if placements[i] != null:
 			cp = placements[i]
 		else:
-			var t: Vector2i = tiles[ti] if ti < tiles.size() else Vector2i(6, 3)
+			var t: Vector2i = tiles[ti] if ti < tiles.size() else Vector2i(7, 8)
 			ti += 1
 			cp = Vector2((t.x + 0.5) * TILE, (t.y + 0.5) * TILE)
 		u.position = cp
@@ -554,13 +563,26 @@ func _spawn_buildings() -> void:
 		world.add_child(u)
 		peasants.append(u)
 
+# A placed building's footprint, honouring its rotation (walls can be turned).
+func _bspan(b: Dictionary) -> Vector2i:
+	var s := _span(b["id"])
+	if int(b.get("rot", 0)) == 1:
+		return Vector2i(s.y, s.x)
+	return s
+
+func _apply_footprint(u: Unit, b: Dictionary) -> void:
+	var sp := _bspan(b)
+	u.foot_w = sp.x * TILE
+	u.foot_h = sp.y * TILE
+	u.radius = maxf(u.foot_w, u.foot_h) * 0.5
+
 func _building_center(b: Dictionary) -> Vector2:
-	var sp := _span(b["id"])
+	var sp := _bspan(b)
 	return Vector2((b["gx"] + sp.x / 2.0) * TILE, (b["gy"] + sp.y / 2.0) * TILE)
 
 func _tile_occupied(gx: int, gy: int) -> bool:
 	for b in buildings:
-		var sp := _span(b["id"])
+		var sp := _bspan(b)
 		if gx >= b["gx"] and gx < b["gx"] + sp.x and gy >= b["gy"] and gy < b["gy"] + sp.y:
 			return true
 	return false
@@ -578,7 +600,7 @@ func _tile_occupied_except(gx: int, gy: int, except_b) -> bool:
 	for b in buildings:
 		if b == except_b:
 			continue
-		var sp := _span(b["id"])
+		var sp := _bspan(b)
 		if gx >= b["gx"] and gx < b["gx"] + sp.x and gy >= b["gy"] and gy < b["gy"] + sp.y:
 			return true
 	return false
@@ -614,42 +636,183 @@ func _do_place(id: String, gx: int, gy: int) -> Unit:
 	peasants.append(u)
 	return u
 
-# Toolbar: buy a wall and drop it on the first free spot in front of the keep.
-func _buy_and_place(id: String) -> void:
-	var cost: int = int(GameData.UNITS[id]["cost"])
-	if gold < cost:
+func _tile_of(pos: Vector2) -> Vector2i:
+	return Vector2i(int(pos.x / TILE), int(pos.y / TILE))
+
+func _center_of(t: Vector2i) -> Vector2:
+	return Vector2((t.x + 0.5) * TILE, (t.y + 0.5) * TILE)
+
+func _unit_at_tile(t: Vector2i, exclude: Dictionary):
+	for p in peasants:
+		if not is_instance_valid(p) or p.is_structure or exclude.has(p):
+			continue
+		if _tile_of(p.global_position) == t:
+			return p
+	return null
+
+func _wall_covering(gx: int, gy: int, except_b):
+	for bb in buildings:
+		if bb == except_b or bb["id"] == "castle" or bb["id"] == "church":
+			continue
+		var sp := _bspan(bb)
+		if gx >= bb["gx"] and gx < bb["gx"] + sp.x and gy >= bb["gy"] and gy < bb["gy"] + sp.y:
+			return bb
+	return null
+
+func _wall_unit(b):
+	for p in peasants:
+		if is_instance_valid(p) and p.is_structure and p.has_meta("bref") and p.get_meta("bref") == b:
+			return p
+	return null
+
+# Toolbar: begin placing a wall as a ghost that follows the cursor. Gold is only
+# spent when it's dropped on a valid spot that overlaps no units.
+func _start_buy(id: String) -> void:
+	if gold < int(GameData.UNITS[id]["cost"]):
 		info_text = "Not enough gold for that."
 		_update_top()
 		return
-	var sp := _span(id)
-	for gx in range(6, -1, -1):
-		for gy in range(0, GRID_ROWS - sp.y + 1):
-			if _footprint_free(gx, gy, sp):
-				gold -= cost
-				_do_place(id, gx, gy)
-				info_text = "Placed %s — drag it into position." % GameData.UNITS[id]["name"]
-				_build_deploy_ui()
-				_update_top()
-				queue_redraw()
-				return
-	info_text = "No open tiles to place that."
+	_buy_id = id
+	_clear_selection()
+	info_text = "Move to position, click to place. Right-click to cancel."
 	_update_top()
+	queue_redraw()
 
-func _move_wall(wall, pos: Vector2) -> void:
+func _place_buy(pos: Vector2) -> void:
+	var sp := _span(_buy_id)
+	var gx := clampi(int(pos.x / TILE), 0, GRID_COLS - sp.x)
+	var gy := clampi(int(pos.y / TILE), 0, GRID_ROWS - sp.y)
+	if not _footprint_free(gx, gy, sp):
+		info_text = "Can't build there — blocked or over a unit."
+		_update_top()
+		queue_redraw()
+		return   # keep the ghost so they can try elsewhere
+	var cost: int = int(GameData.UNITS[_buy_id]["cost"])
+	if gold < cost:
+		info_text = "Not enough gold."
+		_buy_id = ""
+	else:
+		gold -= cost
+		var nm: String = GameData.UNITS[_buy_id]["name"]
+		_do_place(_buy_id, gx, gy)
+		info_text = "Built %s." % nm
+		_buy_id = ""
+	_build_deploy_ui()
+	_update_top()
+	queue_redraw()
+
+# Drop a dragged wall: snap to the tile, swap with a same-size wall there, or
+# snap back if the spot is blocked.
+func _drop_wall(wall, pos: Vector2) -> void:
 	if not wall.has_meta("bref"):
 		return
 	var b = wall.get_meta("bref")
-	var sp := _span(wall.type_id)
+	var sp := _bspan(b)
 	var gx := clampi(int(pos.x / TILE), 0, GRID_COLS - sp.x)
 	var gy := clampi(int(pos.y / TILE), 0, GRID_ROWS - sp.y)
-	if not _footprint_free(gx, gy, sp, b):
-		info_text = "That space is occupied."
-		_update_top()
-		return
-	b["gx"] = gx
-	b["gy"] = gy
-	wall.relocate(_building_center(b))
+	if _footprint_free(gx, gy, sp, b):
+		b["gx"] = gx
+		b["gy"] = gy
+		wall.relocate(_building_center(b))
+	else:
+		var other = _wall_covering(gx, gy, b)
+		if other != null and _bspan(other) == sp:
+			var ob: Dictionary = other
+			var og: int = int(ob["gx"])
+			var oy: int = int(ob["gy"])
+			var ow = _wall_unit(ob)
+			ob["gx"] = b["gx"]
+			ob["gy"] = b["gy"]
+			b["gx"] = og
+			b["gy"] = oy
+			wall.relocate(_building_center(b))
+			if ow != null:
+				ow.relocate(_building_center(ob))
+		elif _drag_origins.has(wall):
+			wall.relocate(_drag_origins[wall])   # blocked: snap back
 	queue_redraw()
+
+func _rotate_wall(wall) -> void:
+	if not wall.has_meta("bref"):
+		return
+	var b = wall.get_meta("bref")
+	if b["id"] == "castle" or b["id"] == "church":
+		return
+	var newrot := 1 - int(b.get("rot", 0))
+	var s := _span(b["id"])
+	var sp := Vector2i(s.y, s.x) if newrot == 1 else s
+	var gx := clampi(int(b["gx"]), 0, GRID_COLS - sp.x)
+	var gy := clampi(int(b["gy"]), 0, GRID_ROWS - sp.y)
+	if _footprint_free(gx, gy, sp, b):
+		b["rot"] = newrot
+		b["gx"] = gx
+		b["gy"] = gy
+		_apply_footprint(wall, b)
+		wall.relocate(_building_center(b))
+		info_text = "Rotated %s." % GameData.UNITS[b["id"]]["name"]
+	else:
+		info_text = "No room to rotate that here."
+	_update_top()
+	queue_redraw()
+
+# Drop the dragged unit group: preserve their formation, allow a swap for a
+# single unit, and snap the whole group back if any target is invalid.
+func _drop_units(pos: Vector2) -> void:
+	if _drag_units.is_empty() or not is_instance_valid(_grab):
+		_reset_drag()
+		return
+	var max_gx := int((FENCE_X - 1.0) / TILE)
+	var delta := Vector2i(clampi(int(pos.x / TILE), 0, max_gx), clampi(int(pos.y / TILE), 0, GRID_ROWS - 1)) - _tile_of(_drag_origins[_grab])
+	var excl := {}
+	for u in _drag_units:
+		excl[u] = true
+	if _drag_units.size() == 1:
+		var u0 = _drag_units[0]
+		var nt := _tile_of(_drag_origins[u0]) + delta
+		nt = Vector2i(clampi(nt.x, 0, max_gx), clampi(nt.y, 0, GRID_ROWS - 1))
+		if _tile_occupied(nt.x, nt.y):
+			_reset_drag()
+			return
+		var occ = _unit_at_tile(nt, excl)
+		if occ != null:   # swap places
+			var ocp := _center_of(_tile_of(_drag_origins[u0]))
+			occ.global_position = ocp
+			occ.command_point = ocp
+		var cp := _center_of(nt)
+		u0.global_position = cp
+		u0.command_point = cp
+		_clear_selection()
+		return
+	var targets := {}
+	for u in _drag_units:
+		var nt := _tile_of(_drag_origins[u]) + delta
+		if nt.x < 0 or nt.x > max_gx or nt.y < 0 or nt.y >= GRID_ROWS or _tile_occupied(nt.x, nt.y) or _unit_at_tile(nt, excl) != null:
+			_reset_drag()
+			return
+		targets[u] = nt
+	for u in _drag_units:
+		var cp := _center_of(targets[u])
+		u.global_position = cp
+		u.command_point = cp
+	_clear_selection()
+
+func _reset_drag() -> void:
+	for n in _drag_origins:
+		if not is_instance_valid(n):
+			continue
+		if n.is_structure:
+			n.relocate(_drag_origins[n])
+		else:
+			n.global_position = _drag_origins[n]
+			n.command_point = _drag_origins[n]
+
+func _clear_grab_state() -> void:
+	if is_instance_valid(_grab) and _grab.is_structure:
+		_grab.being_dragged = false
+	_grab = null
+	_dragging = false
+	_drag_units.clear()
+	_drag_origins.clear()
 
 func _remove_wall(wall) -> void:
 	var cost: int = int(GameData.UNITS[wall.type_id]["cost"])
@@ -803,9 +966,11 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
 			_press_pos = event.position
+			_mouse = event.position
 			_dragging = false
-			_grab = null
-			# Grab a unit to drag it (and its group); if none, grab a wall.
+			if _buy_id != "":
+				return   # a ghost is being placed; the release drops it
+			# Grab a unit (with its selected group) to drag; else grab a wall.
 			var u = _peasant_at(event.position)
 			if u != null:
 				_grab = u
@@ -813,31 +978,64 @@ func _unhandled_input(event: InputEvent) -> void:
 					_clear_selection()
 					u.selected = true
 					u.queue_redraw()
+				for p in peasants:
+					if is_instance_valid(p) and p.selected and not p.is_structure:
+						_drag_units.append(p)
+						_drag_origins[p] = p.global_position
 			else:
-				_grab = _wall_at(event.position)
+				var w = _wall_at(event.position)
+				if w != null:
+					_grab = w
+					w.being_dragged = true
+					_drag_origins[w] = w.global_position
 		else:
-			if _grab != null and _grab.is_structure:
+			if _buy_id != "":
+				_place_buy(event.position)
+			elif not _drag_units.is_empty():
 				if _dragging:
-					_move_wall(_grab, event.position)   # drag to reposition
+					_drop_units(event.position)
+				else:
+					_handle_click(event.position)
+			elif _grab != null and _grab.is_structure:
+				if _dragging:
+					_drop_wall(_grab, event.position)
 				else:
 					_remove_wall(_grab)                 # a plain click sells it back
-			elif _dragging and _grab != null:
-				_command_selected_to(event.position)   # drag-move the selected units
 			elif _dragging:
 				_select_in_rect(Rect2(_press_pos, event.position - _press_pos).abs())
-				queue_redraw()
 			else:
-				_handle_click(event.position)          # a plain click
-			_dragging = false
-			_grab = null
-	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
-		_command_selected_to(event.position)   # right-click also moves (desktop)
-	elif event is InputEventMouseMotion and (event.button_mask & MOUSE_BUTTON_MASK_LEFT):
-		if event.position.distance_to(_press_pos) > 8.0:
-			_dragging = true
-		if _dragging and _grab == null:
-			_sel_rect = Rect2(_press_pos, event.position - _press_pos).abs()
+				_handle_click(event.position)
+			_clear_grab_state()
 			queue_redraw()
+	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
+		if _buy_id != "":
+			_buy_id = ""            # right-click cancels a pending wall purchase
+			info_text = ""
+			queue_redraw()
+		else:
+			var w = _wall_at(event.position)
+			if w != null:
+				_rotate_wall(w)     # right-click a wall to rotate it
+			else:
+				_command_selected_to(event.position)   # else move the selection
+	elif event is InputEventMouseMotion:
+		_mouse = event.position
+		if event.button_mask & MOUSE_BUTTON_MASK_LEFT:
+			if event.position.distance_to(_press_pos) > 6.0:
+				_dragging = true
+			if _dragging:
+				if not _drag_units.is_empty():
+					var d: Vector2 = event.position - _press_pos
+					for u in _drag_units:
+						if is_instance_valid(u):
+							u.global_position = _drag_origins[u] + d   # units follow the cursor
+				elif _grab != null and _grab.is_structure:
+					_grab.global_position = event.position            # wall follows the cursor
+				elif _grab == null and _buy_id == "":
+					_sel_rect = Rect2(_press_pos, event.position - _press_pos).abs()
+			queue_redraw()
+		elif _buy_id != "":
+			queue_redraw()   # ghost tracks the cursor before you click
 
 func _handle_click(pos: Vector2) -> void:
 	var u = _peasant_at(pos)
@@ -1359,16 +1557,17 @@ func _build_deploy_ui() -> void:
 	tele.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.add_child(tele)
 
-	# Building toolbar (bottom-left): a button drops the wall onto the field —
-	# then drag it where you want, or click it to sell it back.
+	# Building toolbar (bottom-left): click a wall to pick it up as a ghost, move
+	# to a spot and click to place (gold is spent only then). Placed walls drag to
+	# move, right-click to rotate, click to sell.
 	var names := {"barricade": "Barricade", "spikes": "Spikes", "palisade": "Palisade", "stone_wall": "Stone Wall"}
 	var bx := 16.0
 	var byy := ARENA.y - 50.0
 	for id in BUILDING_IDS:
 		var cost: int = GameData.UNITS[id]["cost"]
-		var b := _mk_button("%s  %dg" % [names[id], cost], Vector2(bx, byy), Vector2(150, 36), func(): _buy_and_place(id))
+		var b := _mk_button("%s  %dg" % [names[id], cost], Vector2(bx, byy), Vector2(150, 36), func(): _start_buy(id))
 		var bd: Dictionary = GameData.UNITS[id]
-		var btip := "%s\nHealth: %d  ·  Armor: %d\nDrag to move · click to sell." % [bd["name"], int(bd["hp"]), int(bd.get("armor", 0))]
+		var btip := "%s\nHealth: %d  ·  Armor: %d\nPlace, then drag to move · right-click to rotate · click to sell." % [bd["name"], int(bd["hp"]), int(bd.get("armor", 0))]
 		b.mouse_entered.connect(func(): _show_hover(btip, b.global_position + Vector2(0, -100)))
 		b.mouse_exited.connect(_hide_hover)
 		b.disabled = gold < cost
@@ -1491,6 +1690,8 @@ func _update_hover() -> void:
 		txt = "%s\nHealth: %d / %d" % [found.display_name, int(ceil(found.hp)), int(found.max_hp)]
 		if found.armor > 0.0:
 			txt += "\nArmor: %d" % int(found.armor)
+		if found.type_id != "castle" and found.type_id != "church" and phase == Phase.DEPLOY:
+			txt += "\nRight-click to rotate"
 	else:
 		var rng: float = found.attack_range
 		var side := "Your unit" if found.team == 0 else "Enemy"
@@ -1637,6 +1838,42 @@ func _draw() -> void:
 				elif p.type_id == "castle":
 					draw_string(font, Vector2(p.global_position.x - 80.0, p.global_position.y + half_h + 18.0), "Castle Keep", HORIZONTAL_ALIGNMENT_CENTER, 160.0, 13, col)
 
-	if _dragging:
+	# --- Drag previews: highlighted squares showing where things will land ---
+	var mgx := int((FENCE_X - 1.0) / TILE)
+	if _buy_id != "":
+		var sp := _span(_buy_id)
+		var gx := clampi(int(_mouse.x / TILE), 0, GRID_COLS - sp.x)
+		var gy := clampi(int(_mouse.y / TILE), 0, GRID_ROWS - sp.y)
+		_draw_footprint_preview(gx, gy, sp, _footprint_free(gx, gy, sp))
+	elif _dragging and not _drag_units.is_empty() and is_instance_valid(_grab):
+		var delta := Vector2i(clampi(int(_mouse.x / TILE), 0, mgx), clampi(int(_mouse.y / TILE), 0, GRID_ROWS - 1)) - _tile_of(_drag_origins[_grab])
+		var excl := {}
+		for u in _drag_units:
+			excl[u] = true
+		for u in _drag_units:
+			var nt := _tile_of(_drag_origins[u]) + delta
+			var ok := nt.x >= 0 and nt.x <= mgx and nt.y >= 0 and nt.y < GRID_ROWS and not _tile_occupied(nt.x, nt.y) and _unit_at_tile(nt, excl) == null
+			_draw_tile_preview(nt, ok)
+	elif _dragging and _grab != null and _grab.is_structure and _grab.has_meta("bref"):
+		var b = _grab.get_meta("bref")
+		var sp2 := _bspan(b)
+		var gx2 := clampi(int(_mouse.x / TILE), 0, GRID_COLS - sp2.x)
+		var gy2 := clampi(int(_mouse.y / TILE), 0, GRID_ROWS - sp2.y)
+		var swp = _wall_covering(gx2, gy2, b)
+		var okw: bool = _footprint_free(gx2, gy2, sp2, b) or (swp != null and _bspan(swp) == sp2)
+		_draw_footprint_preview(gx2, gy2, sp2, okw)
+	elif _dragging and _grab == null and _buy_id == "":
 		draw_rect(_sel_rect, Color(1, 1, 0.4, 0.12))
 		draw_rect(_sel_rect, Color(1, 1, 0.4, 0.7), false, 1.5)
+
+func _draw_tile_preview(t: Vector2i, ok: bool) -> void:
+	var col := Color(0.4, 0.9, 0.4, 0.35) if ok else Color(0.95, 0.35, 0.3, 0.35)
+	var r := Rect2(t.x * TILE, t.y * TILE, TILE, TILE)
+	draw_rect(r, col)
+	draw_rect(r, Color(1, 1, 1, 0.6), false, 1.5)
+
+func _draw_footprint_preview(gx: int, gy: int, sp: Vector2i, ok: bool) -> void:
+	var col := Color(0.4, 0.9, 0.4, 0.30) if ok else Color(0.95, 0.35, 0.3, 0.30)
+	var r := Rect2(gx * TILE, gy * TILE, sp.x * TILE, sp.y * TILE)
+	draw_rect(r, col)
+	draw_rect(r, Color(1, 1, 1, 0.7), false, 2.0)

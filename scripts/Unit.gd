@@ -56,6 +56,7 @@ var _spread_cd: float = 0.0
 var command_point: Vector2 = Vector2.ZERO   # where you've ordered this unit to hold
 var _home := Vector2(INF, INF)               # structures lock here — nothing can shove them
 var engaging: bool = false                   # currently committed to a foe (drives social aggro)
+var being_dragged: bool = false              # player is dragging this structure right now
 var attacker = null                          # who last hit me (so comrades can rally to a struck wall)
 var attacker_time: float = 0.0               # seconds the call-for-help stays warm
 var selected: bool = false
@@ -103,7 +104,7 @@ func setup(def: Dictionary, _team: int, _main) -> void:
 func _process(delta: float) -> void:
 	# Structures are immovable: pin them to where they were placed so no
 	# knockback or jostling can ever slide a wall/castle/church off its tiles.
-	if is_structure:
+	if is_structure and not being_dragged:
 		if _home == Vector2(INF, INF):
 			_home = global_position
 		elif global_position != _home:
@@ -266,6 +267,35 @@ func _physics_process(delta: float) -> void:
 	if goal != null:
 		var spd := move_speed * (0.5 if slow_time > 0.0 else 1.0)
 		_step_toward(goal, spd * delta)
+
+	# Final guarantee: never rest inside a wall — separation, knockback, or a
+	# tight squeeze can nudge a body in, so eject it to the nearest open edge.
+	_eject_from_walls()
+
+func _eject_from_walls() -> void:
+	if main == null:
+		return
+	var guard := 0
+	var b = main.blocking_wall(global_position, radius, self)
+	while b != null and guard < 5:
+		var w: float = b.foot_w if b.foot_w > 0.0 else b.radius * 2.0
+		var h: float = b.foot_h if b.foot_h > 0.0 else b.radius * 2.0
+		var rect := Rect2(b.global_position - Vector2(w, h) * 0.5, Vector2(w, h)).grow(radius * 0.6)
+		var to_left: float = global_position.x - rect.position.x
+		var to_right: float = rect.end.x - global_position.x
+		var to_top: float = global_position.y - rect.position.y
+		var to_bot: float = rect.end.y - global_position.y
+		var m: float = min(min(to_left, to_right), min(to_top, to_bot))
+		if m == to_left:
+			global_position.x = rect.position.x
+		elif m == to_right:
+			global_position.x = rect.end.x
+		elif m == to_top:
+			global_position.y = rect.position.y
+		else:
+			global_position.y = rect.end.y
+		guard += 1
+		b = main.blocking_wall(global_position, radius, self)
 
 func _movement_goal(has_t: bool, dist: float, reach: float):
 	# Enemies always advance on the nearest target.
