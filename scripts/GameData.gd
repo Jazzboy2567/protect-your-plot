@@ -9,21 +9,21 @@ extends RefCounted
 
 const UNITS := {
 	# --- Your side ---
-	"peasant":    {"id":"peasant","name":"Peasant","hp":40,"damage":6,"range":7,"cooldown":1.0,"speed":55,"radius":8,"cost":10,"armor":1,"color":Color(0.80,0.82,0.86)},
-	"archer":     {"id":"archer","name":"Archer","hp":24,"damage":8,"range":150,"cooldown":1.1,"speed":50,"radius":7,"cost":25,"color":Color(0.60,0.80,0.62)},
-	"woodcutter": {"id":"woodcutter","name":"Woodcutter","hp":65,"damage":15,"range":9,"cooldown":1.4,"speed":45,"radius":9,"cost":35,"pierce":true,"color":Color(0.72,0.62,0.50)},
-	"hunter":     {"id":"hunter","name":"Hunter","hp":30,"damage":7,"range":130,"cooldown":1.0,"speed":55,"radius":7,"cost":30,"bonus_beast":2.2,"color":Color(0.55,0.70,0.45)},
-	"herbalist":  {"id":"herbalist","name":"Herbalist","hp":30,"damage":5,"range":70,"cooldown":1.3,"speed":52,"radius":8,"cost":35,"heals":true,"heal_range":95,"heal_amount":10,"color":Color(0.55,0.80,0.70)},
-	"fisherman":  {"id":"fisherman","name":"Fisherman","hp":38,"damage":5,"range":9,"cooldown":1.1,"speed":55,"radius":8,"cost":30,"applies_slow":true,"color":Color(0.55,0.72,0.80)},
-	"torchbearer":{"id":"torchbearer","name":"Torchbearer","hp":34,"damage":6,"range":8,"cooldown":1.0,"speed":55,"radius":8,"cost":35,"applies_burn":true,"color":Color(0.90,0.65,0.35)},
-	"baker":      {"id":"baker","name":"Baker","hp":34,"damage":4,"range":7,"cooldown":1.2,"speed":52,"radius":8,"cost":30,"aura":"heal","aura_range":95,"aura_value":5,"color":Color(0.86,0.78,0.55)},
-	"monk":       {"id":"monk","name":"Monk","hp":34,"damage":4,"range":7,"cooldown":1.2,"speed":52,"radius":8,"cost":35,"aura":"haste","aura_range":95,"aura_value":0.30,"color":Color(0.70,0.66,0.80)},
+	"peasant":    {"id":"peasant","name":"Peasant","hp":40,"damage":6,"range":7,"cooldown":1.0,"speed":55,"radius":8,"cost":5,"armor":1,"color":Color(0.80,0.82,0.86)},
+	"archer":     {"id":"archer","name":"Archer","hp":24,"damage":8,"range":150,"cooldown":1.1,"speed":50,"radius":7,"cost":15,"color":Color(0.60,0.80,0.62)},
+	"woodcutter": {"id":"woodcutter","name":"Woodcutter","hp":65,"damage":15,"range":9,"cooldown":1.4,"speed":45,"radius":9,"cost":22,"pierce":true,"color":Color(0.72,0.62,0.50)},
+	"hunter":     {"id":"hunter","name":"Hunter","hp":30,"damage":7,"range":130,"cooldown":1.0,"speed":55,"radius":7,"cost":18,"bonus_beast":2.2,"color":Color(0.55,0.70,0.45)},
+	"herbalist":  {"id":"herbalist","name":"Herbalist","hp":30,"damage":5,"range":70,"cooldown":1.3,"speed":52,"radius":8,"cost":22,"heals":true,"heal_range":95,"heal_amount":10,"color":Color(0.55,0.80,0.70)},
+	"fisherman":  {"id":"fisherman","name":"Fisherman","hp":38,"damage":5,"range":9,"cooldown":1.1,"speed":55,"radius":8,"cost":18,"applies_slow":true,"color":Color(0.55,0.72,0.80)},
+	"torchbearer":{"id":"torchbearer","name":"Torchbearer","hp":34,"damage":6,"range":8,"cooldown":1.0,"speed":55,"radius":8,"cost":22,"applies_burn":true,"color":Color(0.90,0.65,0.35)},
+	"baker":      {"id":"baker","name":"Baker","hp":34,"damage":4,"range":7,"cooldown":1.2,"speed":52,"radius":8,"cost":18,"aura":"heal","aura_range":95,"aura_value":5,"color":Color(0.86,0.78,0.55)},
+	"monk":       {"id":"monk","name":"Monk","hp":34,"damage":4,"range":7,"cooldown":1.2,"speed":52,"radius":8,"cost":22,"aura":"haste","aura_range":95,"aura_value":0.30,"color":Color(0.70,0.66,0.80)},
 	# structures (you start with castle + church; walls are bought)
 	"barricade":  {"id":"barricade","name":"Barricade","hp":220,"damage":0,"range":0,"cooldown":1.0,"speed":0,"radius":14,"cost":30,"structure":true,"armor":2,"span_x":1,"span_y":2,"color":Color(0.50,0.35,0.20)},
 	"spikes":     {"id":"spikes","name":"Spike Barricade","hp":150,"damage":0,"range":0,"cooldown":1.0,"speed":0,"radius":13,"cost":40,"structure":true,"armor":1,"span_x":1,"span_y":2,"color":Color(0.45,0.42,0.40)},
 	"palisade":   {"id":"palisade","name":"Palisade","hp":380,"damage":0,"range":0,"cooldown":1.0,"speed":0,"radius":15,"cost":45,"structure":true,"armor":4,"span_x":1,"span_y":2,"color":Color(0.46,0.33,0.19)},
 	"stone_wall": {"id":"stone_wall","name":"Stone Wall","hp":600,"damage":0,"range":0,"cooldown":1.0,"speed":0,"radius":16,"cost":70,"structure":true,"armor":8,"span_x":1,"span_y":2,"color":Color(0.55,0.55,0.58)},
-	"church":     {"id":"church","name":"Church","hp":300,"damage":0,"range":0,"cooldown":1.0,"speed":0,"radius":34,"cost":60,"structure":true,"armor":2,"invuln":true,"span_x":2,"span_y":2,"color":Color(0.86,0.82,0.66)},
+	"church":     {"id":"church","name":"Church","hp":300,"damage":0,"range":0,"cooldown":1.0,"speed":0,"radius":34,"cost":60,"structure":true,"armor":2,"invuln":true,"span_x":3,"span_y":2,"color":Color(0.86,0.82,0.66)},
 	"castle":     {"id":"castle","name":"Castle Keep","hp":900,"damage":0,"range":0,"cooldown":1.0,"speed":0,"radius":52,"cost":0,"structure":true,"armor":5,"span_x":3,"span_y":3,"color":Color(0.62,0.62,0.68)},
 
 	# --- Enemies (right side) — reddish. targets defaults to your units. ---
