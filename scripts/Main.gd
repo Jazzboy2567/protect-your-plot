@@ -76,16 +76,12 @@ const RELIC_SCOPE := {
 const RELIC_REQUIRES := {
 	"longbows": ["archer"], "sharpened_axes": ["woodcutter"], "hawk_eye": ["archer", "hunter"],
 }
-const STRUCT_ITEMS := ["barricade", "spikes", "palisade", "stone_wall"]
 
 var gold: int = START_GOLD
 var battle_num: int = 1
 var army: Array = START_ARMY.duplicate()
 var phase: int = Phase.SHOP
 var info_text: String = ""
-
-var rally_cd: float = 0.0
-var rally_time: float = 0.0
 
 var relics: Array = []
 var contracts: Array = []      # specialist ids you've signed (max 4); only these are hireable
@@ -97,8 +93,6 @@ var dead_this_battle: Array = []
 var total_fallen: int = 0          # units lost across the run (the church's revive pool)
 var formation: Array = []          # saved unit layout {id, pos} so positions persist
 var buildings: Array = []          # persistent placed buildings: {id, gx, gy}
-var _build_sel: String = ""        # building id selected for placement ("" = command mode)
-
 var peasants: Array = []
 var enemies: Array = []
 
@@ -106,7 +100,6 @@ var world: Node2D
 var hud: CanvasLayer
 var top_label: RichTextLabel
 var panel: Control
-var rally_btn: Button
 var banner: Label
 var ctrl_speed: Button
 var ctrl_full: Button
@@ -296,7 +289,7 @@ func _sign_contract(id: String) -> void:
 
 func start_deploy() -> void:
 	phase = Phase.DEPLOY
-	_build_sel = ""
+	_buy_id = ""
 	_despawn_all()
 	_spawn_buildings()
 	_spawn_peasants()
@@ -415,8 +408,6 @@ func _restart() -> void:
 	gold = START_GOLD
 	battle_num = 1
 	army = START_ARMY.duplicate()
-	rally_cd = 0.0
-	rally_time = 0.0
 	relics = []
 	_refresh_relic_dock()
 	contracts = []
@@ -428,7 +419,7 @@ func _restart() -> void:
 	total_fallen = 0
 	formation = []
 	buildings = [{"id": "castle", "gx": CASTLE_GX, "gy": CASTLE_GY}, {"id": "church", "gx": 0, "gy": 8}]
-	_build_sel = ""
+	_buy_id = ""
 	info_text = ""
 	show_shop()
 
@@ -491,8 +482,6 @@ func _apply_relics(u: Unit) -> void:
 			"blacksmith_forge":
 				if not u.is_structure:
 					u.armor += 3
-			"rat_charm":
-				u.plague_immune = true
 			"fortifier":
 				if u.is_structure:
 					u.max_hp *= 1.8
@@ -924,16 +913,6 @@ func get_backline_peasant():
 			best = p
 	return best
 
-func try_spread_plague(u: Unit) -> void:
-	for a in get_allies(u):
-		if a == u or not is_instance_valid(a) or a.is_structure or a.plague_immune or a.plague_time > 0.0:
-			continue
-		if u.global_position.distance_to(a.global_position) < 34.0:
-			a.infect(u.plague_dps, 4.0)
-			return
-
-func damage_mult(team: int) -> float:
-	return 1.0
 
 func on_unit_died(u: Unit) -> void:
 	if u.team == 1 and phase == Phase.BATTLE:
@@ -1497,42 +1476,6 @@ func _build_shop_ui() -> void:
 	_style_green_button(dep)
 	outer.add_child(dep)
 
-# Non-interlude rounds: a roster on the left, a big green Deploy at bottom-right.
-func _build_predeploy_ui() -> void:
-	_clear_panel()
-	top_label.visible = false
-	_add_backdrop(0.5)
-	_shop_header("Wave %d/%d   ·   Gold %d" % [battle_num, MAX_BATTLES, gold], 24, 20)
-
-	# Roster list on the left (units only — buildings aren't "forces").
-	var comp := {}
-	for id in army:
-		if GameData.UNITS[id].get("structure", false):
-			continue
-		comp[id] = int(comp.get(id, 0)) + 1
-	var y := 66.0
-	for id in comp:
-		var l := Label.new()
-		l.text = "%d  ·  %s" % [comp[id], GameData.UNITS[id]["name"]]
-		l.position = Vector2(28, y)
-		l.add_theme_color_override("font_color", COL_INK)
-		l.add_theme_font_size_override("font_size", 17)
-		l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		panel.add_child(l)
-		y += 30
-
-	var dep := _mk_button("Deploy for Wave %d  >>" % battle_num, Vector2(ARENA.x - 350, ARENA.y - 92), Vector2(320, 58), start_deploy)
-	_style_green_button(dep)
-
-func _shop_header(text: String, x: float, y: float) -> void:
-	var l := Label.new()
-	l.text = text
-	l.position = Vector2(x, y)
-	l.add_theme_font_size_override("font_size", 19)
-	l.add_theme_color_override("font_color", COL_GOLD)
-	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.add_child(l)
-
 func _wave_summary(n: int) -> String:
 	var counts := {}
 	for id in GameData.generate_wave(n):
@@ -1577,13 +1520,6 @@ func _build_deploy_ui() -> void:
 	_style_green_button(fb)
 	_build_roster_label()
 	queue_redraw()
-
-func _set_build_sel(id: String) -> void:
-	_build_sel = id
-	if id != "":
-		_clear_selection()
-	_build_deploy_ui()
-	_update_top()
 
 func _build_battle_ui() -> void:
 	_clear_panel()
@@ -1649,7 +1585,6 @@ func spawn_float_text(pos: Vector2, text: String, color: Color) -> void:
 	t.tween_callback(l.queue_free)
 
 func _clear_panel() -> void:
-	rally_btn = null
 	_hide_hover()
 	for c in panel.get_children():
 		panel.remove_child(c)

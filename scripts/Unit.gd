@@ -26,12 +26,10 @@ var body_color: Color = Color(0.78, 0.80, 0.85)
 var gold_drop: int = 0
 var armor: float = 0.0                 # flat damage reduction (min 1 damage taken)
 var pierce: bool = false               # attacks ignore target armor
-var aura: String = ""                  # "", "heal", "haste", or "cleanse"
+var aura: String = ""                  # "", "heal", or "haste"
 var aura_range: float = 0.0
 var aura_value: float = 0.0            # heal = hp/sec to allies; haste = attack-speed bonus
 var is_beast: bool = false
-var plague_immune: bool = false
-var applies_plague: bool = false
 var applies_burn: bool = false
 var applies_slow: bool = false
 var knockback: float = 0.0
@@ -46,12 +44,9 @@ var heal_range: float = 0.0           # reach for healing (longer than the attac
 var evasion: float = 0.0              # 0..1 chance to dodge a hit (rare)
 var targets: String = ""             # "" units; "structures" = go for walls/castle
 
-var plague_time: float = 0.0
-var plague_dps: float = 0.0
 var burn_time: float = 0.0
 var burn_dps: float = 0.0
 var slow_time: float = 0.0
-var _spread_cd: float = 0.0
 
 var command_point: Vector2 = Vector2.ZERO   # where you've ordered this unit to hold
 var _home := Vector2(INF, INF)               # structures lock here — nothing can shove them
@@ -86,8 +81,6 @@ func setup(def: Dictionary, _team: int, _main) -> void:
 	aura_value = float(def.get("aura_value", 0))
 	is_beast = bool(def.get("beast", false))
 	invulnerable = bool(def.get("invuln", false))
-	plague_immune = bool(def.get("plague_immune", false))
-	applies_plague = bool(def.get("applies_plague", false))
 	applies_burn = bool(def.get("applies_burn", false))
 	applies_slow = bool(def.get("applies_slow", false))
 	knockback = float(def.get("knockback", 0))
@@ -133,18 +126,10 @@ func _physics_process(delta: float) -> void:
 		return
 	_cd -= delta
 
-	# Damage-over-time: plague spreads to nearby allies; burn does not.
+	# Damage-over-time: burn ticks down HP.
 	if slow_time > 0.0:
 		slow_time -= delta
 	var dot := false
-	if plague_time > 0.0:
-		plague_time -= delta
-		hp -= plague_dps * delta
-		dot = true
-		_spread_cd -= delta
-		if _spread_cd <= 0.0:
-			_spread_cd = 1.0
-			main.try_spread_plague(self)
 	if burn_time > 0.0:
 		burn_time -= delta
 		hp -= burn_dps * delta
@@ -197,9 +182,6 @@ func _physics_process(delta: float) -> void:
 				haste += a.aura_value
 			elif a.aura == "heal":
 				heal_rate += a.aura_value
-			elif a.aura == "cleanse" and plague_time > 0.0:
-				plague_time = 0.0
-				queue_redraw()
 		# Social aggro (fighting units only): rally to a comrade already engaged,
 		# or to a wall/keep currently under attack, if it's about a tile away.
 		if team == 0 and not heals and social == null:
@@ -251,7 +233,7 @@ func _physics_process(delta: float) -> void:
 				dmg *= crit_mult
 			if team == 1:
 				target.note_attacker(self)
-			target.take_damage(dmg * main.damage_mult(team), pierce, is_crit)
+			target.take_damage(dmg, pierce, is_crit)
 			if applies_burn:
 				target.ignite(3.0, 3.0)
 			if applies_slow:
@@ -357,12 +339,6 @@ func take_damage(amount: float, pierce_flag: bool = false, is_crit: bool = false
 	if hp <= 0.0:
 		die()
 
-func infect(dps: float, t: float) -> void:
-	if plague_immune or _dead:
-		return
-	plague_dps = maxf(plague_dps, dps)
-	plague_time = maxf(plague_time, t)
-
 func ignite(dps: float, t: float) -> void:
 	if _dead:
 		return
@@ -399,8 +375,6 @@ func _draw() -> void:
 	var c := body_color
 	if _flash > 0.0:
 		c = body_color.lerp(Color.WHITE, clampf(_flash / 0.12, 0.0, 1.0) * 0.85)
-	elif plague_time > 0.0:
-		c = body_color.lerp(Color(0.3, 0.8, 0.2), 0.5)   # sickly green when infected
 
 	if is_structure:
 		var w: float = foot_w if foot_w > 0.0 else radius * 2.0
