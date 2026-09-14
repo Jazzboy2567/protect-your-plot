@@ -40,6 +40,48 @@ const UNITS := {
 	"black_death": {"id":"black_death","name":"The Black Death","hp":650,"damage":26,"range":13,"cooldown":1.1,"speed":30,"radius":22,"drop":70,"armor":8,"color":Color(0.50,0.10,0.35)},
 }
 
+# Guild flavour names and the one-line specialty shown on each contract card.
+const GUILD_NAMES := {
+	"archer": "Archers' Guild", "woodcutter": "Woodsmen", "hunter": "Hunters' Lodge",
+	"herbalist": "Apothecary", "fisherman": "Wharf", "torchbearer": "Wharf",
+	"baker": "Bakers' Row", "monk": "Abbey",
+}
+const SPECIALTY := {
+	"archer": "Longest range", "woodcutter": "Pierces armor",
+	"hunter": "Double damage vs beasts", "herbalist": "Heals your units",
+	"fisherman": "Slows enemies on hit", "torchbearer": "Burns enemies on hit",
+	"baker": "Heal aura to nearby allies", "monk": "Attack-speed aura to nearby allies",
+}
+
+# Run-wide passive upgrades (buy once, from the shop every 4th battle).
+const RELIC_DEFS := {
+	"sharp_tools":      {"name": "Sharpened Tools", "cost": 60, "effect": "+25% damage"},
+	"village_bell":     {"name": "Village Bell", "cost": 60, "effect": "+20% attack speed"},
+	"blacksmith_forge": {"name": "Blacksmith's Forge", "cost": 55, "effect": "+3 armor"},
+	"full_granary":     {"name": "Full Granary", "cost": 50, "effect": "+2 free peasants each battle"},
+	"fortifier":        {"name": "Fortifier", "cost": 45, "effect": "Walls +80% HP"},
+	"longbows":         {"name": "Longbows", "cost": 45, "effect": "Archer range +40, damage +3"},
+	"shields":          {"name": "Shields", "cost": 40, "effect": "Peasant armor +2"},
+	"sharpened_axes":   {"name": "Sharpened Axes", "cost": 40, "effect": "Woodcutter damage +8"},
+	"keen_edge":        {"name": "Keen Edge", "cost": 55, "effect": "+15% crit chance"},
+	"warhorn":          {"name": "War Horn", "cost": 50, "effect": "+15% attack speed"},
+	"swift_boots":      {"name": "Swift Boots", "cost": 40, "effect": "+20% move speed"},
+	"iron_rations":     {"name": "Iron Rations", "cost": 50, "effect": "+25% max HP"},
+	"hawk_eye":         {"name": "Hawk Eye", "cost": 45, "effect": "Ranged range +30"},
+	"berserkers_brew":  {"name": "Berserker's Brew", "cost": 55, "effect": "+40% damage, -15% HP"},
+}
+# Who each relic buffs (shown as a category tag on the item).
+const RELIC_SCOPE := {
+	"sharp_tools": "Everyone", "village_bell": "Everyone", "blacksmith_forge": "Everyone",
+	"full_granary": "Peasants", "fortifier": "Walls", "longbows": "Archers", "shields": "Peasants",
+	"sharpened_axes": "Woodcutters", "keen_edge": "Everyone", "warhorn": "Everyone",
+	"swift_boots": "Everyone", "iron_rations": "Everyone", "hawk_eye": "Ranged", "berserkers_brew": "Everyone",
+}
+# Class-specific relics only appear once you've contracted a matching unit.
+const RELIC_REQUIRES := {
+	"longbows": ["archer"], "sharpened_axes": ["woodcutter"], "hawk_eye": ["archer", "hunter"],
+}
+
 # Build the enemy wave for battle number n (1-based). Every 4th battle is a boss.
 static func generate_wave(n: int) -> Array:
 	var w: Array = []
