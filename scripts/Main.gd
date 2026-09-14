@@ -63,9 +63,15 @@ var top_label: RichTextLabel
 var panel: Control
 var banner: Label
 var ctrl_speed: Button
-var ctrl_full: Button
+var ctrl_settings: Button
 var hover_label: Label
 var relic_dock: VBoxContainer
+var settings_panel: Control
+var ui_text_scale: float = 1.0     # info-text size multiplier (Settings)
+var _shop_viewing: bool = false    # shop temporarily hidden to view the plot
+var _shop_backdrop: ColorRect
+var _shop_content: Control
+var _toolbar_open: bool = false    # wall build toolbar expanded (Build ▸)
 var _speed_i: int = 0
 const SPEEDS := [1.0, 2.0, 3.0]
 
@@ -130,13 +136,14 @@ func _ready() -> void:
 	_style_button(ctrl_speed)
 	hud.add_child(ctrl_speed)
 
-	ctrl_full = Button.new()
-	ctrl_full.text = "Fullscreen"
-	ctrl_full.position = Vector2(ARENA.x - 132, 10)
-	ctrl_full.size = Vector2(122, 30)
-	ctrl_full.pressed.connect(_toggle_fullscreen)
-	_style_button(ctrl_full)
-	hud.add_child(ctrl_full)
+	ctrl_settings = Button.new()
+	ctrl_settings.text = "⚙"
+	ctrl_settings.position = Vector2(ARENA.x - 50, 10)
+	ctrl_settings.size = Vector2(40, 30)
+	ctrl_settings.tooltip_text = "Settings"
+	ctrl_settings.pressed.connect(_toggle_settings)
+	_style_button(ctrl_settings)
+	hud.add_child(ctrl_settings)
 
 	hover_label = Label.new()
 	hover_label.add_theme_color_override("font_color", COL_INK)
@@ -161,8 +168,109 @@ func _ready() -> void:
 	relic_dock.position = Vector2(ARENA.x - 46, 52)
 	hud.add_child(relic_dock)
 
+	_build_settings_overlay()
+
 	buildings = [{"id": "castle", "gx": CASTLE_GX, "gy": CASTLE_GY}, {"id": "church", "gx": 0, "gy": 8}]
 	show_shop()
+
+# ---------------------------------------------------------------- settings
+func _build_settings_overlay() -> void:
+	settings_panel = Control.new()
+	settings_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+	settings_panel.z_index = 300
+	settings_panel.visible = false
+	hud.add_child(settings_panel)
+
+	var bg := ColorRect.new()
+	bg.color = Color(0.04, 0.04, 0.03, 0.78)
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.mouse_filter = Control.MOUSE_FILTER_STOP   # block clicks to the game behind
+	settings_panel.add_child(bg)
+
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	settings_panel.add_child(center)
+	var plaque := PanelContainer.new()
+	plaque.add_theme_stylebox_override("panel", _panel_style())
+	plaque.custom_minimum_size = Vector2(460, 0)
+	center.add_child(plaque)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 12)
+	plaque.add_child(col)
+
+	var head := Label.new()
+	head.text = "Settings"
+	head.add_theme_font_size_override("font_size", 24)
+	head.add_theme_color_override("font_color", COL_GOLD)
+	head.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	col.add_child(head)
+
+	# --- Visuals ---
+	col.add_child(_section_label("Visuals"))
+	var fs := _menu_button("Toggle Fullscreen", _toggle_fullscreen)
+	fs.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	col.add_child(fs)
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 12)
+	var lbl := Label.new()
+	lbl.text = "Info text size"
+	lbl.add_theme_color_override("font_color", COL_INK)
+	lbl.custom_minimum_size = Vector2(130, 0)
+	row.add_child(lbl)
+	var sl := HSlider.new()
+	sl.min_value = 0.5
+	sl.max_value = 3.0
+	sl.step = 0.1
+	sl.value = ui_text_scale
+	sl.custom_minimum_size = Vector2(190, 0)
+	sl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(sl)
+	var sb := SpinBox.new()
+	sb.min_value = 0.5
+	sb.max_value = 3.0
+	sb.step = 0.1
+	sb.value = ui_text_scale
+	row.add_child(sb)
+	sl.value_changed.connect(func(v): sb.set_value_no_signal(v); _set_text_scale(v))
+	sb.value_changed.connect(func(v): sl.set_value_no_signal(v); _set_text_scale(v))
+	col.add_child(row)
+
+	# --- Audio (placeholder to flesh out) ---
+	col.add_child(_section_label("Audio"))
+	var av := Label.new()
+	av.text = "Master volume — coming soon"
+	av.add_theme_color_override("font_color", COL_SOFT)
+	col.add_child(av)
+
+	# --- Other (placeholder to flesh out) ---
+	col.add_child(_section_label("Other"))
+	var ov := Label.new()
+	ov.text = "More options coming soon"
+	ov.add_theme_color_override("font_color", COL_SOFT)
+	col.add_child(ov)
+
+	col.add_child(HSeparator.new())
+	var close := _menu_button("Close", _toggle_settings)
+	close.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	col.add_child(close)
+
+func _toggle_settings() -> void:
+	if settings_panel:
+		settings_panel.visible = not settings_panel.visible
+
+func _set_text_scale(v: float) -> void:
+	ui_text_scale = clampf(v, 0.5, 3.0)
+	_apply_text_scale()
+
+func _apply_text_scale() -> void:
+	var s := ui_text_scale
+	if top_label:
+		top_label.add_theme_font_size_override("normal_font_size", int(round(19 * s)))
+		top_label.add_theme_font_size_override("bold_font_size", int(round(19 * s)))
+	if hover_label:
+		hover_label.add_theme_font_size_override("font_size", int(round(12 * s)))
 
 func is_fighting() -> bool:
 	return phase == Phase.BATTLE
@@ -184,10 +292,14 @@ func _toggle_fullscreen() -> void:
 # other rounds go straight to a light pre-deploy screen (no new recruits).
 func show_shop() -> void:
 	_despawn_all()
+	_shop_viewing = false
 	if army.is_empty():
 		army.append("peasant")
 		army.append("peasant")
 		info_text = "Your land lies empty — 2 peasants volunteer."
+	# Spawn a static preview of the plot so "View plot" shows the real layout.
+	_spawn_buildings()
+	_spawn_peasants()
 	if is_interlude():
 		recruits_left = RECRUIT_CAP
 		recruited_this_cycle = []
@@ -1083,11 +1195,12 @@ func _peasant_at(pos: Vector2):
 # ---------------------------------------------------------------- UI
 
 # A dark full-screen backdrop behind a modal (blocks the field, hides bleed-through).
-func _add_backdrop(alpha: float = 0.62) -> void:
+func _add_backdrop(alpha: float = 0.62) -> ColorRect:
 	var bg := ColorRect.new()
 	bg.color = Color(0.05, 0.06, 0.04, alpha)
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	panel.add_child(bg)
+	return bg
 
 func _card_style() -> StyleBoxFlat:
 	var s := StyleBoxFlat.new()
@@ -1249,43 +1362,66 @@ func _guild_card(id: String) -> Control:
 	v.add_child(btn)
 	return pc
 
+# Slay-the-Spire-style relic: name + effect on the card, cost below it, click to
+# buy (no Buy button). Hover shows the full description.
 func _relic_card(id: String) -> Control:
 	var d: Dictionary = GameData.RELIC_DEFS[id]
 	var cost: int = int(d["cost"])
 	var eff: String = str(d.get("effect", ""))
 	var scope_name: String = str(GameData.RELIC_SCOPE.get(id, "Everyone"))
+	var affordable: bool = gold >= cost
+
 	var pc := PanelContainer.new()
 	pc.add_theme_stylebox_override("panel", _card_style())
-	pc.custom_minimum_size = Vector2(240, 150)   # fixed height so all cards align
+	pc.custom_minimum_size = Vector2(210, 150)   # fixed height so all cards align
+	pc.mouse_filter = Control.MOUSE_FILTER_STOP
+	if not affordable:
+		pc.modulate = Color(1, 1, 1, 0.5)
 	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 6)
+	v.add_theme_constant_override("separation", 5)
+	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	pc.add_child(v)
 
-	# The effect line is the headline — no need to also spell out a name.
+	var nm := Label.new()
+	nm.text = d["name"]
+	nm.add_theme_color_override("font_color", COL_INK)
+	nm.add_theme_font_size_override("font_size", 16)
+	nm.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	nm.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	nm.custom_minimum_size = Vector2(186, 0)
+	nm.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	v.add_child(nm)
+
 	var el := Label.new()
 	el.text = eff
-	el.add_theme_color_override("font_color", COL_INK)
-	el.add_theme_font_size_override("font_size", 16)
+	el.add_theme_color_override("font_color", COL_SOFT)
+	el.add_theme_font_size_override("font_size", 12)
+	el.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	el.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	el.custom_minimum_size = Vector2(212, 0)
+	el.custom_minimum_size = Vector2(186, 0)
+	el.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	v.add_child(el)
 
 	var spacer := Control.new()
 	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	v.add_child(spacer)
 
-	var scope := Label.new()
-	scope.text = scope_name.to_upper()
-	scope.add_theme_color_override("font_color", COL_GOLD)
-	scope.add_theme_font_size_override("font_size", 11)
-	scope.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	v.add_child(scope)
+	# Cost sits below the relic, on its own — no "Buy" label.
+	var cl := Label.new()
+	cl.text = "%d gold" % cost
+	cl.add_theme_color_override("font_color", COL_GOLD if affordable else COL_SOFT)
+	cl.add_theme_font_size_override("font_size", 17)
+	cl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	cl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	v.add_child(cl)
 
-	var btn := _menu_button("Buy — %dg" % cost, func(): _buy_relic(id))
-	btn.custom_minimum_size = Vector2(200, 30)
-	btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	btn.disabled = gold < cost
-	v.add_child(btn)
+	var tip := "%s\n%s\nAffects: %s" % [d["name"], eff, scope_name]
+	pc.mouse_entered.connect(func(): _show_hover(tip, pc.global_position + Vector2(0, -96)))
+	pc.mouse_exited.connect(_hide_hover)
+	pc.gui_input.connect(func(e):
+		if e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT and affordable:
+			_buy_relic(id))
 	return pc
 
 # The Guild page: a centered modal — sign one free contract to unlock a specialist.
@@ -1336,11 +1472,12 @@ func _build_guild_ui() -> void:
 func _build_shop_ui() -> void:
 	_clear_panel()
 	top_label.visible = true
-	_add_backdrop(0.9)   # solid overlay over the field
+	_shop_backdrop = _add_backdrop(0.9)   # solid overlay over the field
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.add_child(center)
+	_shop_content = center   # the whole modal we can hide with View
 	var pc := PanelContainer.new()
 	pc.add_theme_stylebox_override("panel", _panel_style())
 	center.add_child(pc)
@@ -1430,12 +1567,25 @@ func _build_shop_ui() -> void:
 			b.disabled = recruits_left <= 0 or gold < cost
 			pal.add_child(b)
 
-	outer.add_child(HSeparator.new())
-	var dep := _menu_button("Deploy for Wave %d  >>" % battle_num, start_deploy)
-	dep.custom_minimum_size = Vector2(300, 46)
-	dep.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	_style_green_button(dep)
-	outer.add_child(dep)
+	# View + Continue in the bottom-right stay visible even when the modal is
+	# hidden: View toggles the shop away so you can look over your plot and
+	# relics before spending.
+	var view_btn := _mk_button("View plot" if not _shop_viewing else "Back to shop", Vector2(ARENA.x - 310, ARENA.y - 56), Vector2(140, 40), _toggle_shop_view)
+	_style_button(view_btn)
+	var cont2 := _mk_button("Continue  >>", Vector2(ARENA.x - 160, ARENA.y - 56), Vector2(150, 40), start_deploy)
+	_style_green_button(cont2)
+
+	_apply_shop_view()
+
+func _toggle_shop_view() -> void:
+	_shop_viewing = not _shop_viewing
+	_build_shop_ui()   # rebuild so the button label and visibility both update
+
+func _apply_shop_view() -> void:
+	if _shop_backdrop:
+		_shop_backdrop.visible = not _shop_viewing
+	if _shop_content:
+		_shop_content.visible = not _shop_viewing
 
 func _wave_summary(n: int) -> String:
 	var counts := {}
@@ -1461,58 +1611,106 @@ func _build_deploy_ui() -> void:
 	tele.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.add_child(tele)
 
-	# Building toolbar (bottom-left): click a wall to pick it up as a ghost, move
-	# to a spot and click to place (gold is spent only then). Placed walls drag to
-	# move, right-click to rotate, click to sell.
-	var names := {"barricade": "Barricade", "spikes": "Spikes", "palisade": "Palisade", "stone_wall": "Stone Wall"}
-	var bx := 16.0
+	# Building toolbar (bottom-left) hides behind a Build button. Open it to pick a
+	# wall; click a wall to pick it up as a ghost, place, drag to move, right-click
+	# to rotate, click to sell.
 	var byy := ARENA.y - 50.0
-	for id in BUILDING_IDS:
-		var cost: int = GameData.UNITS[id]["cost"]
-		var b := _mk_button("%s  %dg" % [names[id], cost], Vector2(bx, byy), Vector2(150, 36), func(): _start_buy(id))
-		var bd: Dictionary = GameData.UNITS[id]
-		var btip := "%s\nHealth: %d  ·  Armor: %d\nPlace, then drag to move · right-click to rotate · click to sell." % [bd["name"], int(bd["hp"]), int(bd.get("armor", 0))]
-		b.mouse_entered.connect(func(): _show_hover(btip, b.global_position + Vector2(0, -100)))
-		b.mouse_exited.connect(_hide_hover)
-		b.disabled = gold < cost
-		bx += 156
+	if not _toolbar_open:
+		_mk_button("Build ▸", Vector2(16, byy), Vector2(120, 36), func(): _toolbar_open = true; _build_deploy_ui())
+	else:
+		_mk_button("◂ Build", Vector2(16, byy), Vector2(90, 36), func(): _toolbar_open = false; _build_deploy_ui())
+		var names := {"barricade": "Barricade", "spikes": "Spikes", "palisade": "Palisade", "stone_wall": "Stone Wall"}
+		var bx := 112.0
+		for id in BUILDING_IDS:
+			var cost: int = GameData.UNITS[id]["cost"]
+			var b := _mk_button("%s  %dg" % [names[id], cost], Vector2(bx, byy), Vector2(150, 36), func(): _start_buy(id))
+			var bd: Dictionary = GameData.UNITS[id]
+			var btip := "%s\nHealth: %d  ·  Armor: %d\nPlace, then drag to move · right-click to rotate · click to sell." % [bd["name"], int(bd["hp"]), int(bd.get("armor", 0))]
+			b.mouse_entered.connect(func(): _show_hover(btip, b.global_position + Vector2(0, -100)))
+			b.mouse_exited.connect(_hide_hover)
+			b.disabled = gold < cost
+			bx += 156
 
 	var fb := _mk_button("Fight!  >>", Vector2(ARENA.x - 320, ARENA.y - 108), Vector2(300, 52), begin_fight)
 	_style_green_button(fb)
-	_build_roster_label()
+	_build_field_hud()
 	queue_redraw()
 
 func _build_battle_ui() -> void:
 	_clear_panel()
 	top_label.visible = true
+	_build_field_hud()
 
-func _build_roster_label() -> void:
-	# Bottom-left tally, styled like the Gold/Income HUD: peasants white, each
-	# specialist in its own colour.
-	var comp := {}
-	var order: Array = []
-	for id in army:
-		if GameData.UNITS[id].get("structure", false):
-			continue   # buildings aren't "forces"
-		if not comp.has(id):
-			order.append(id)
-		comp[id] = int(comp.get(id, 0)) + 1
-	var s := "[b][color=#e8dcbe]Your forces[/color][/b]\n"
-	for id in order:
-		var hexcol: String = "ffffff" if id == "peasant" else GameData.UNITS[id]["color"].to_html(false)
-		s += "[color=#%s]%d  %s[/color]\n" % [hexcol, comp[id], _plural(GameData.UNITS[id]["name"], comp[id])]
+func _hud_bg() -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.05, 0.05, 0.03, 0.80)
+	sb.border_color = COL_BORDER
+	sb.set_border_width_all(1)
+	sb.set_corner_radius_all(4)
+	sb.content_margin_left = 10
+	sb.content_margin_right = 10
+	sb.content_margin_top = 6
+	sb.content_margin_bottom = 6
+	return sb
+
+# A titled black-backed list whose entries pop a tooltip on hover. Returns its
+# pixel height so callers can stack panels. `entries` are {text, meta, hex}.
+func _hud_list(title: String, entries: Array, tip_cb: Callable, pos: Vector2, from_bottom: bool) -> float:
+	var s := "[b][color=#e8dcbe]%s[/color][/b]\n" % title
+	for e in entries:
+		s += "[url=%s][color=#%s]%s[/color][/url]\n" % [e["meta"], e["hex"], e["text"]]
+	if entries.is_empty():
+		s += "[color=#8a8069]— none yet —[/color]\n"
+	var rows := maxi(1, entries.size()) + 1
+	var h := float(rows) * 22.0 + 16.0
 	var rl := RichTextLabel.new()
 	rl.bbcode_enabled = true
 	rl.text = s
 	rl.fit_content = true
 	rl.scroll_active = false
-	rl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	rl.mouse_filter = Control.MOUSE_FILTER_STOP   # needs hover; PASS wouldn't fire meta signals
 	rl.add_theme_font_size_override("normal_font_size", 15)
 	rl.add_theme_font_size_override("bold_font_size", 15)
-	var h: float = float(order.size() + 1) * 22.0 + 8.0
-	rl.size = Vector2(230, h)
-	rl.position = Vector2(16, ARENA.y - 66.0 - h)   # sit just above the wall toolbar
+	rl.add_theme_stylebox_override("normal", _hud_bg())
+	rl.size = Vector2(214, h)
+	rl.position = Vector2(pos.x, (ARENA.y - 66.0 - h) if from_bottom else pos.y)
+	if tip_cb.is_valid():
+		rl.meta_hover_started.connect(func(m): _show_hover(tip_cb.call(str(m)), rl.global_position + Vector2(rl.size.x + 8.0, 0.0)))
+		rl.meta_hover_ended.connect(func(_m): _hide_hover())
 	panel.add_child(rl)
+	return h
+
+func _relic_tip(id: String) -> String:
+	var d: Dictionary = GameData.RELIC_DEFS.get(id, {})
+	return "%s\n%s\nAffects: %s" % [str(d.get("name", id)), str(d.get("effect", "")), str(GameData.RELIC_SCOPE.get(id, "Everyone"))]
+
+# Roster (bottom-left), relics and contracts (right) — all with hover tooltips.
+func _build_field_hud() -> void:
+	var unit_tip := Callable(self, "_unit_tooltip")
+	# Your forces
+	var comp := {}
+	var order: Array = []
+	for id in army:
+		if GameData.UNITS[id].get("structure", false):
+			continue
+		if not comp.has(id):
+			order.append(id)
+		comp[id] = int(comp.get(id, 0)) + 1
+	var forces: Array = []
+	for id in order:
+		var hex: String = "ffffff" if id == "peasant" else GameData.UNITS[id]["color"].to_html(false)
+		forces.append({"text": "%d  %s" % [comp[id], _plural(GameData.UNITS[id]["name"], comp[id])], "meta": id, "hex": hex})
+	_hud_list("Your forces", forces, unit_tip, Vector2(16, 0), true)
+	# Relics (right)
+	var rrelics: Array = []
+	for id in relics:
+		rrelics.append({"text": str(GameData.RELIC_DEFS[id]["name"]), "meta": id, "hex": "f2ab2e"})
+	var rh := _hud_list("Relics", rrelics, Callable(self, "_relic_tip"), Vector2(ARENA.x - 230, 56), false)
+	# Contracts (right, below relics)
+	var rcon: Array = []
+	for id in contracts:
+		rcon.append({"text": str(GameData.GUILD_NAMES.get(id, GameData.UNITS[id]["name"])), "meta": id, "hex": "e8dcbe"})
+	_hud_list("Contracts", rcon, unit_tip, Vector2(ARENA.x - 230, 56.0 + rh + 12.0), false)
 
 func _mk_button(text: String, pos: Vector2, size: Vector2, cb: Callable) -> Button:
 	var b := Button.new()
@@ -1600,8 +1798,7 @@ func _update_hover() -> void:
 		if found.heals:
 			txt += "\nHeals allies · light attack"
 	hover_label.text = txt
-	hover_label.position = mp + Vector2(14, 12)
-	hover_label.visible = true
+	_position_hover(mp + Vector2(14, 12))
 
 # ---------------------------------------------------------------- actions
 
@@ -1675,9 +1872,21 @@ func _process(_delta: float) -> void:
 
 func _show_hover(text: String, at: Vector2 = Vector2(-9999, -9999)) -> void:
 	hover_label.text = text
-	var p: Vector2 = (get_global_mouse_position() + Vector2(14, 12)) if at.x < -9000.0 else at
-	p.x = clampf(p.x, 4.0, ARENA.x - 190.0)
-	p.y = clampf(p.y, 4.0, ARENA.y - 120.0)   # never runs off the bottom of the screen
+	var anchor: Vector2 = (get_global_mouse_position() + Vector2(14, 12)) if at.x < -9000.0 else at
+	_position_hover(anchor)
+
+# Size the tooltip to its text and keep it fully on-screen — flipping it above
+# the anchor when it would otherwise run off the bottom.
+func _position_hover(anchor: Vector2) -> void:
+	hover_label.reset_size()   # shrink the box to fit the text (no dead space)
+	var sz: Vector2 = hover_label.size
+	var p: Vector2 = anchor
+	if p.x + sz.x > ARENA.x - 4.0:
+		p.x = anchor.x - sz.x - 24.0   # flip to the left of the pointer
+	if p.y + sz.y > ARENA.y - 4.0:
+		p.y = anchor.y - sz.y - 24.0   # flip above the pointer
+	p.x = clampf(p.x, 4.0, ARENA.x - sz.x - 4.0)
+	p.y = clampf(p.y, 4.0, ARENA.y - sz.y - 4.0)
 	hover_label.position = p
 	hover_label.visible = true
 
@@ -1734,42 +1943,55 @@ func _draw() -> void:
 				elif p.type_id == "castle":
 					draw_string(font, Vector2(p.global_position.x - 80.0, p.global_position.y + half_h + 18.0), "Castle Keep", HORIZONTAL_ALIGNMENT_CENTER, 160.0, 13, col)
 
-	# --- Drag previews: highlighted squares showing where things will land ---
+	# --- Drag previews (green = valid, yellow = swaps a spot, red = blocked) ---
 	var mgx := int((FENCE_X - 1.0) / TILE)
 	if _buy_id != "":
 		var sp := _span(_buy_id)
 		var gx := clampi(int(_mouse.x / TILE), 0, GRID_COLS - sp.x)
 		var gy := clampi(int(_mouse.y / TILE), 0, GRID_ROWS - sp.y)
-		_draw_footprint_preview(gx, gy, sp, _footprint_free(gx, gy, sp))
+		_draw_footprint_preview(gx, gy, sp, 0 if _footprint_free(gx, gy, sp) else 2)
 	elif _dragging and not _drag_units.is_empty() and is_instance_valid(_grab):
 		var delta := Vector2i(clampi(int(_mouse.x / TILE), 0, mgx), clampi(int(_mouse.y / TILE), 0, GRID_ROWS - 1)) - _tile_of(_drag_origins[_grab])
 		var excl := {}
 		for u in _drag_units:
 			excl[u] = true
+		var single := _drag_units.size() == 1
 		for u in _drag_units:
 			var nt := _tile_of(_drag_origins[u]) + delta
-			var ok := nt.x >= 0 and nt.x <= mgx and nt.y >= 0 and nt.y < GRID_ROWS and not _tile_occupied(nt.x, nt.y) and _unit_at_tile(nt, excl) == null
-			_draw_tile_preview(nt, ok)
+			var inb := nt.x >= 0 and nt.x <= mgx and nt.y >= 0 and nt.y < GRID_ROWS
+			var st := 2
+			if inb and not _tile_occupied(nt.x, nt.y):
+				var occ = _unit_at_tile(nt, excl)
+				if occ == null:
+					st = 0
+				elif single:
+					st = 1   # a single unit swaps with whoever's there
+			_draw_tile_preview(nt, st)
 	elif _dragging and _grab != null and _grab.is_structure and _grab.has_meta("bref"):
 		var b = _grab.get_meta("bref")
 		var sp2 := _bspan(b)
 		var gx2 := clampi(int(_mouse.x / TILE), 0, GRID_COLS - sp2.x)
 		var gy2 := clampi(int(_mouse.y / TILE), 0, GRID_ROWS - sp2.y)
-		var swp = _wall_covering(gx2, gy2, b)
-		var okw: bool = _footprint_free(gx2, gy2, sp2, b) or (swp != null and _bspan(swp) == sp2)
-		_draw_footprint_preview(gx2, gy2, sp2, okw)
+		var st2 := 2
+		if _footprint_free(gx2, gy2, sp2, b):
+			st2 = 0
+		else:
+			var swp = _wall_covering(gx2, gy2, b)
+			if swp != null and _bspan(swp) == sp2:
+				st2 = 1   # swap with a same-size wall
+		_draw_footprint_preview(gx2, gy2, sp2, st2)
 	elif _dragging and _grab == null and _buy_id == "":
 		draw_rect(_sel_rect, Color(1, 1, 0.4, 0.12))
 		draw_rect(_sel_rect, Color(1, 1, 0.4, 0.7), false, 1.5)
 
-func _draw_tile_preview(t: Vector2i, ok: bool) -> void:
-	var col := Color(0.4, 0.9, 0.4, 0.35) if ok else Color(0.95, 0.35, 0.3, 0.35)
+const _PREVIEW_FILL := [Color(0.4, 0.9, 0.4, 0.35), Color(0.95, 0.85, 0.3, 0.4), Color(0.95, 0.35, 0.3, 0.35)]
+
+func _draw_tile_preview(t: Vector2i, state: int) -> void:
 	var r := Rect2(t.x * TILE, t.y * TILE, TILE, TILE)
-	draw_rect(r, col)
+	draw_rect(r, _PREVIEW_FILL[state])
 	draw_rect(r, Color(1, 1, 1, 0.6), false, 1.5)
 
-func _draw_footprint_preview(gx: int, gy: int, sp: Vector2i, ok: bool) -> void:
-	var col := Color(0.4, 0.9, 0.4, 0.30) if ok else Color(0.95, 0.35, 0.3, 0.30)
+func _draw_footprint_preview(gx: int, gy: int, sp: Vector2i, state: int) -> void:
 	var r := Rect2(gx * TILE, gy * TILE, sp.x * TILE, sp.y * TILE)
-	draw_rect(r, col)
+	draw_rect(r, _PREVIEW_FILL[state])
 	draw_rect(r, Color(1, 1, 1, 0.7), false, 2.0)
