@@ -72,6 +72,7 @@ var _shop_viewing: bool = false    # shop temporarily hidden to view the plot
 var _shop_backdrop: ColorRect
 var _shop_content: Control
 var _toolbar_open: bool = false    # wall build toolbar expanded (Build ▸)
+var _ui_hover_active: bool = false # a UI element (panel/card) owns the tooltip right now
 var _speed_i: int = 0
 const SPEEDS := [1.0, 2.0, 3.0]
 
@@ -130,7 +131,7 @@ func _ready() -> void:
 	# Persistent top-right controls (survive panel rebuilds).
 	ctrl_speed = Button.new()
 	ctrl_speed.text = "Speed x1"
-	ctrl_speed.position = Vector2(ARENA.x - 250, 10)
+	ctrl_speed.position = Vector2(ARENA.x - 166, 10)
 	ctrl_speed.size = Vector2(110, 30)
 	ctrl_speed.pressed.connect(_cycle_speed)
 	_style_button(ctrl_speed)
@@ -1362,8 +1363,9 @@ func _guild_card(id: String) -> Control:
 	v.add_child(btn)
 	return pc
 
-# Slay-the-Spire-style relic: name + effect on the card, cost below it, click to
-# buy (no Buy button). Hover shows the full description.
+# Slay-the-Spire-style relic: the box shows name / who it affects / effect, and
+# the gold cost sits BELOW the box (outside it). Click the box to buy; hover it
+# for the full description (room for an icon later).
 func _relic_card(id: String) -> Control:
 	var d: Dictionary = GameData.RELIC_DEFS[id]
 	var cost: int = int(d["cost"])
@@ -1371,14 +1373,18 @@ func _relic_card(id: String) -> Control:
 	var scope_name: String = str(GameData.RELIC_SCOPE.get(id, "Everyone"))
 	var affordable: bool = gold >= cost
 
+	var outer := VBoxContainer.new()
+	outer.add_theme_constant_override("separation", 6)
+	if not affordable:
+		outer.modulate = Color(1, 1, 1, 0.55)
+
 	var pc := PanelContainer.new()
 	pc.add_theme_stylebox_override("panel", _card_style())
-	pc.custom_minimum_size = Vector2(210, 150)   # fixed height so all cards align
+	pc.custom_minimum_size = Vector2(210, 118)
 	pc.mouse_filter = Control.MOUSE_FILTER_STOP
-	if not affordable:
-		pc.modulate = Color(1, 1, 1, 0.5)
+	outer.add_child(pc)
 	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 5)
+	v.add_theme_constant_override("separation", 6)
 	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	pc.add_child(v)
 
@@ -1392,37 +1398,40 @@ func _relic_card(id: String) -> Control:
 	nm.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	v.add_child(nm)
 
+	var af := Label.new()
+	af.text = scope_name.to_upper()
+	af.add_theme_color_override("font_color", COL_GOLD)
+	af.add_theme_font_size_override("font_size", 11)
+	af.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	af.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	v.add_child(af)
+
 	var el := Label.new()
 	el.text = eff
 	el.add_theme_color_override("font_color", COL_SOFT)
-	el.add_theme_font_size_override("font_size", 12)
+	el.add_theme_font_size_override("font_size", 13)
 	el.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	el.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	el.custom_minimum_size = Vector2(186, 0)
 	el.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	v.add_child(el)
 
-	var spacer := Control.new()
-	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	v.add_child(spacer)
-
-	# Cost sits below the relic, on its own — no "Buy" label.
+	# Cost OUTSIDE the box, in gold.
 	var cl := Label.new()
 	cl.text = "%d gold" % cost
 	cl.add_theme_color_override("font_color", COL_GOLD if affordable else COL_SOFT)
 	cl.add_theme_font_size_override("font_size", 17)
 	cl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	cl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	v.add_child(cl)
+	outer.add_child(cl)
 
-	var tip := "%s\n%s\nAffects: %s" % [d["name"], eff, scope_name]
-	pc.mouse_entered.connect(func(): _show_hover(tip, pc.global_position + Vector2(0, -96)))
+	var tip := "%s\nAffects: %s\n%s" % [d["name"], scope_name, eff]
+	pc.mouse_entered.connect(func(): _show_hover(tip, pc.global_position + Vector2(0, -84)))
 	pc.mouse_exited.connect(_hide_hover)
 	pc.gui_input.connect(func(e):
 		if e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT and affordable:
 			_buy_relic(id))
-	return pc
+	return outer
 
 # The Guild page: a centered modal — sign one free contract to unlock a specialist.
 func _build_guild_ui() -> void:
@@ -1545,11 +1554,12 @@ func _build_shop_ui() -> void:
 	pal.add_theme_constant_override("separation", 10)
 	pal.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	outer.add_child(pal)
-	var pb := _menu_button("Peasant · free", func(): _buy("peasant"))
+	var pcost: int = GameData.UNITS["peasant"]["cost"]
+	var pb := _menu_button("Peasant · %dg" % pcost, func(): _buy("peasant"))
 	pb.custom_minimum_size = Vector2(170, 30)
 	pb.mouse_entered.connect(func(): _show_hover(_unit_tooltip("peasant"), pb.global_position + Vector2(0, -116)))
 	pb.mouse_exited.connect(_hide_hover)
-	pb.disabled = recruits_left <= 0
+	pb.disabled = recruits_left <= 0 or gold < pcost
 	pal.add_child(pb)
 	if contracts.is_empty():
 		var hint := Label.new()
@@ -1570,6 +1580,9 @@ func _build_shop_ui() -> void:
 	# View + Continue in the bottom-right stay visible even when the modal is
 	# hidden: View toggles the shop away so you can look over your plot and
 	# relics before spending.
+	# While viewing, surface the same forces/relics/contracts panels as deploy.
+	if _shop_viewing:
+		_build_field_hud()
 	var view_btn := _mk_button("View plot" if not _shop_viewing else "Back to shop", Vector2(ARENA.x - 310, ARENA.y - 56), Vector2(140, 40), _toggle_shop_view)
 	_style_button(view_btn)
 	var cont2 := _mk_button("Continue  >>", Vector2(ARENA.x - 160, ARENA.y - 56), Vector2(150, 40), start_deploy)
@@ -1618,9 +1631,9 @@ func _build_deploy_ui() -> void:
 	if not _toolbar_open:
 		_mk_button("Build ▸", Vector2(16, byy), Vector2(120, 36), func(): _toolbar_open = true; _build_deploy_ui())
 	else:
-		_mk_button("◂ Build", Vector2(16, byy), Vector2(90, 36), func(): _toolbar_open = false; _build_deploy_ui())
+		_mk_button("◂ Build", Vector2(16, byy), Vector2(120, 36), func(): _toolbar_open = false; _build_deploy_ui())
 		var names := {"barricade": "Barricade", "spikes": "Spikes", "palisade": "Palisade", "stone_wall": "Stone Wall"}
-		var bx := 112.0
+		var bx := 142.0
 		for id in BUILDING_IDS:
 			var cost: int = GameData.UNITS[id]["cost"]
 			var b := _mk_button("%s  %dg" % [names[id], cost], Vector2(bx, byy), Vector2(150, 36), func(): _start_buy(id))
@@ -1764,6 +1777,8 @@ func _update_top() -> void:
 	top_label.text = s
 
 func _update_hover() -> void:
+	if _ui_hover_active:
+		return   # a panel/card tooltip is showing — don't fight it
 	var mp := get_global_mouse_position()
 	var found = null
 	for u in peasants:
@@ -1808,11 +1823,14 @@ func _buy(id: String) -> void:
 	if id in PEASANT_IDS:
 		if recruits_left <= 0:
 			info_text = "No recruit slots left this cycle."
+		elif gold < cost:
+			info_text = "Not enough gold for %s." % uname
 		else:
+			gold -= cost
 			recruits_left -= 1
 			recruited_this_cycle.append(id)
 			army.append(id)
-			info_text = "%s joins your service (free)." % uname
+			info_text = "%s joins your service." % uname
 	elif id in SPECIALIST_IDS:
 		if not (id in contracts):
 			info_text = "Sign the %s guild's contract first." % uname
@@ -1866,11 +1884,12 @@ func _buy_relic(id: String) -> void:
 func _process(_delta: float) -> void:
 	if phase == Phase.BATTLE:
 		_update_top()
-	if phase == Phase.DEPLOY or phase == Phase.BATTLE:
+	if phase == Phase.DEPLOY or phase == Phase.BATTLE or _shop_viewing:
 		_update_hover()
 		queue_redraw()   # keep the grid + building labels live
 
 func _show_hover(text: String, at: Vector2 = Vector2(-9999, -9999)) -> void:
+	_ui_hover_active = true   # keep the per-frame unit-hover from stealing this
 	hover_label.text = text
 	var anchor: Vector2 = (get_global_mouse_position() + Vector2(14, 12)) if at.x < -9000.0 else at
 	_position_hover(anchor)
@@ -1891,6 +1910,7 @@ func _position_hover(anchor: Vector2) -> void:
 	hover_label.visible = true
 
 func _hide_hover() -> void:
+	_ui_hover_active = false
 	if hover_label:
 		hover_label.visible = false
 
@@ -1929,7 +1949,7 @@ func _draw() -> void:
 	# Only the keep and church carry a permanent label — the church above it and
 	# the keep below, so their names never collide. Walls stay unlabelled (hover
 	# shows their name and health instead).
-	if phase == Phase.DEPLOY or phase == Phase.BATTLE:
+	if phase == Phase.DEPLOY or phase == Phase.BATTLE or _shop_viewing:
 		var font := ThemeDB.fallback_font
 		if font != null:
 			var col := Color(0.97, 0.94, 0.8)

@@ -141,22 +141,23 @@ func _physics_process(delta: float) -> void:
 			return
 
 	# --- Acquire / re-acquire a target ---
-	if team == 0 and heals:
-		# Herbalist: mend the most-hurt ally in range; if nobody needs it, poke the nearest foe.
-		var ht = main.get_heal_target(self)
-		target = ht if ht != null else main.get_nearest_enemy(self)
-	elif target == null or not is_instance_valid(target) or target.hp <= 0.0 or (team == 0 and target.team == team):
-		# Commit to a target until it dies; only re-pick when it's gone.
-		target = null
-		if team == 0:
-			target = main.get_nearest_enemy(self)
+	if team == 0:
+		# Your units always fight the nearest threat — including whoever is
+		# currently attacking them — so they never sit still and get chewed up.
+		if heals:
+			var ht = main.get_heal_target(self)
+			target = ht if ht != null else main.get_nearest_enemy(self)
 		else:
-			if behavior == "diver":
-				target = main.get_backline_peasant()
-			elif targets == "structures":
-				target = main.get_nearest_structure(self)
-			if target == null:
-				target = main.get_nearest_enemy(self)
+			target = main.get_nearest_enemy(self)
+	elif target == null or not is_instance_valid(target) or target.hp <= 0.0:
+		# Enemies commit to a target until it dies, then re-pick.
+		target = null
+		if behavior == "diver":
+			target = main.get_backline_peasant()
+		elif targets == "structures":
+			target = main.get_nearest_structure(self)
+		if target == null:
+			target = main.get_nearest_enemy(self)
 
 	# A wall directly ahead must be broken through first (structure-hunters skip this).
 	if team == 1 and targets != "structures":
