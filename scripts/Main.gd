@@ -1657,8 +1657,8 @@ func _build_deploy_ui() -> void:
 			chip.size = Vector2(150, 36)
 			chip.custom_minimum_size = Vector2(150, 36)
 			var bd: Dictionary = GameData.UNITS[id]
-			var btip := "%s\nHealth: %d  ·  Armor: %d\nPress + drag onto the field to place · right-click to rotate · drag off to sell." % [bd["name"], int(bd["hp"]), int(bd.get("armor", 0))]
-			chip.mouse_entered.connect(func(): _show_hover(btip, chip.global_position + Vector2(0, -100)))
+			var btip := "%s\nHealth: %d  ·  Armor: %d" % [bd["name"], int(bd["hp"]), int(bd.get("armor", 0))]
+			chip.mouse_entered.connect(func(): _show_hover(btip, chip.global_position + Vector2(0, -70)))
 			chip.mouse_exited.connect(_hide_hover)
 			panel.add_child(chip)
 			bx += 156
@@ -1710,7 +1710,8 @@ func _hud_list(title: String, entries: Array, tip_cb: Callable, pos: Vector2, fr
 		var on_right := pos.x > ARENA.x * 0.5
 		rl.meta_hover_started.connect(func(m):
 			if on_right:
-				_show_hover(tip_cb.call(str(m)), rl.global_position + Vector2(-8.0, 8.0), true)
+				# Below-left of the cursor, so it never covers the right-side panels.
+				_show_hover(tip_cb.call(str(m)), get_global_mouse_position() + Vector2(0.0, 20.0), true)
 			else:
 				_show_hover(tip_cb.call(str(m)), rl.global_position + Vector2(rl.size.x + 8.0, 0.0)))
 		rl.meta_hover_ended.connect(func(_m): _hide_hover())

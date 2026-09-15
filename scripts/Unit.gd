@@ -7,6 +7,7 @@ extends Node2D
 const ENGAGE_RADIUS := 120.0          # how far a unit chases a foe that nears its post
 const AGGRO_RADIUS := 95.0            # a foe this close to the unit itself is engaged, wherever it strays
 const NEIGHBOR_DIST := 62.0           # social aggro: a foe a comrade this close is fighting, I fight too
+const LEASH := 190.0                  # how far a unit will chase from its post before regrouping
 
 var main = null                       # reference to Main (owns the unit arrays)
 var team: int = 0                     # 0 = peasant, 1 = enemy
@@ -200,10 +201,13 @@ func _physics_process(delta: float) -> void:
 		queue_redraw()
 
 	# --- Decide engagement (your non-healer units drive & spread social aggro) ---
+	# Ranged units advance until their target is within firing range, so they keep
+	# up with the line and keep shooting instead of sitting idle out of range.
 	engaging = false
 	if team == 0 and not heals and is_instance_valid(target) and target.team == 1:
 		var td := global_position.distance_to(target.global_position)
-		if td <= AGGRO_RADIUS or target.global_position.distance_to(command_point) <= ENGAGE_RADIUS:
+		var reach_out: float = maxf(AGGRO_RADIUS, attack_range + 45.0)
+		if td <= reach_out or target.global_position.distance_to(command_point) <= ENGAGE_RADIUS:
 			engaging = true
 		elif social != null:
 			target = social
@@ -294,8 +298,13 @@ func _movement_goal(has_t: bool, dist: float, reach: float):
 	if has_t and dist <= reach:
 		return null
 	# Committed to a foe (directly, socially, or via a struck wall) — or a
-	# healer moving to a hurt ally: close the distance. Otherwise hold post.
-	if has_t and (engaging or (heals and target.team == team)):
+	# healer moving to a hurt ally: close the distance. But don't chase far past
+	# your post (a leash) so the line stays together and units don't wander off.
+	if has_t and heals and target.team == team:
+		return target.global_position
+	if has_t and engaging:
+		if global_position.distance_to(command_point) > LEASH:
+			return command_point   # strayed too far — regroup
 		return target.global_position
 	if global_position.distance_to(command_point) > 8.0:
 		return command_point
@@ -344,6 +353,21 @@ func _step_toward(goal: Vector2, maxd: float) -> void:
 				best_step = step
 	if best_step != Vector2.ZERO:
 		global_position += best_step
+		return
+	# Fallback: no corner worked (boxed in) — take any free direction that gets us
+	# closer to the goal, so the unit keeps trying instead of freezing.
+	var fb_step := Vector2.ZERO
+	var fb_best := global_position.distance_to(goal)
+	for ang in [45.0, -45.0, 90.0, -90.0, 135.0, -135.0, 180.0]:
+		var dd: Vector2 = dir.rotated(deg_to_rad(ang)) * d
+		var np: Vector2 = global_position + dd
+		if not main.wall_blocks(np, radius, self):
+			var nd: float = np.distance_to(goal)
+			if nd < fb_best:
+				fb_best = nd
+				fb_step = dd
+	if fb_step != Vector2.ZERO:
+		global_position += fb_step
 
 func take_damage(amount: float, pierce_flag: bool = false, is_crit: bool = false) -> void:
 	if _dead or invulnerable:
