@@ -770,6 +770,10 @@ func _drop_wall(wall, pos: Vector2) -> void:
 	if not wall.has_meta("bref"):
 		return
 	var b = wall.get_meta("bref")
+	# Dragged off the build area (out onto the field) — sell it for a refund.
+	if pos.x > FENCE_X + 70.0:
+		_remove_wall(wall)
+		return
 	var sp := _bspan(b)
 	var gx := clampi(int(pos.x / TILE), 0, GRID_COLS - sp.x)
 	var gy := clampi(int(pos.y / TILE), 0, GRID_ROWS - sp.y)
@@ -1052,8 +1056,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			elif _grab != null and _grab.is_structure:
 				if _dragging:
 					_drop_wall(_grab, event.position)
-				else:
-					_remove_wall(_grab)                 # a plain click sells it back
+				# a plain click does nothing now — sell by dragging it off the field
 			elif _dragging:
 				_select_in_rect(Rect2(_press_pos, event.position - _press_pos).abs())
 			else:
@@ -1555,11 +1558,10 @@ func _build_shop_ui() -> void:
 	pal.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	outer.add_child(pal)
 	var pcost: int = GameData.UNITS["peasant"]["cost"]
-	var pb := _menu_button("Peasant · %dg" % pcost, func(): _buy("peasant"))
-	pb.custom_minimum_size = Vector2(170, 30)
+	var pb := _priced_chip("Peasant", "%dg" % pcost, func(): _buy("peasant"), recruits_left > 0 and gold >= pcost)
+	pb.custom_minimum_size = Vector2(170, 34)
 	pb.mouse_entered.connect(func(): _show_hover(_unit_tooltip("peasant"), pb.global_position + Vector2(0, -116)))
 	pb.mouse_exited.connect(_hide_hover)
-	pb.disabled = recruits_left <= 0 or gold < pcost
 	pal.add_child(pb)
 	if contracts.is_empty():
 		var hint := Label.new()
@@ -1570,11 +1572,10 @@ func _build_shop_ui() -> void:
 	else:
 		for id in contracts:
 			var cost: int = GameData.UNITS[id]["cost"]
-			var b := _menu_button("%s · %dg" % [GameData.UNITS[id]["name"], cost], func(): _buy(id))
-			b.custom_minimum_size = Vector2(170, 30)
+			var b := _priced_chip(str(GameData.UNITS[id]["name"]), "%dg" % cost, func(): _buy(id), recruits_left > 0 and gold >= cost)
+			b.custom_minimum_size = Vector2(170, 34)
 			b.mouse_entered.connect(func(): _show_hover(_unit_tooltip(id), b.global_position + Vector2(0, -116)))
 			b.mouse_exited.connect(_hide_hover)
-			b.disabled = recruits_left <= 0 or gold < cost
 			pal.add_child(b)
 
 	# View + Continue in the bottom-right stay visible even when the modal is
@@ -1636,12 +1637,17 @@ func _build_deploy_ui() -> void:
 		var bx := 142.0
 		for id in BUILDING_IDS:
 			var cost: int = GameData.UNITS[id]["cost"]
-			var b := _mk_button("%s  %dg" % [names[id], cost], Vector2(bx, byy), Vector2(150, 36), func(): _start_buy(id))
+			# Press the chip to pick up a ghost; drag it onto the field and drop, or
+			# click the chip then click a tile. Gold is spent only on a valid placement.
+			var chip := _priced_chip(names[id], "%dg" % cost, func(): _start_buy(id), gold >= cost)
+			chip.position = Vector2(bx, byy)
+			chip.size = Vector2(150, 36)
+			chip.custom_minimum_size = Vector2(150, 36)
 			var bd: Dictionary = GameData.UNITS[id]
-			var btip := "%s\nHealth: %d  ·  Armor: %d\nPlace, then drag to move · right-click to rotate · click to sell." % [bd["name"], int(bd["hp"]), int(bd.get("armor", 0))]
-			b.mouse_entered.connect(func(): _show_hover(btip, b.global_position + Vector2(0, -100)))
-			b.mouse_exited.connect(_hide_hover)
-			b.disabled = gold < cost
+			var btip := "%s\nHealth: %d  ·  Armor: %d\nPress + drag onto the field to place · right-click to rotate · drag off to sell." % [bd["name"], int(bd["hp"]), int(bd.get("armor", 0))]
+			chip.mouse_entered.connect(func(): _show_hover(btip, chip.global_position + Vector2(0, -100)))
+			chip.mouse_exited.connect(_hide_hover)
+			panel.add_child(chip)
 			bx += 156
 
 	var fb := _mk_button("Fight!  >>", Vector2(ARENA.x - 320, ARENA.y - 108), Vector2(300, 52), begin_fight)
@@ -1734,6 +1740,36 @@ func _mk_button(text: String, pos: Vector2, size: Vector2, cb: Callable) -> Butt
 	_style_button(b)
 	panel.add_child(b)
 	return b
+
+# A clickable chip: name in cream, price in gold. `on_press` fires on left-press
+# (so a wall chip can start a ghost you then drag onto the field and drop).
+func _priced_chip(nm: String, cost_text: String, on_press: Callable, enabled: bool) -> PanelContainer:
+	var pc := PanelContainer.new()
+	pc.add_theme_stylebox_override("panel", _card_style())
+	pc.mouse_filter = Control.MOUSE_FILTER_STOP
+	if not enabled:
+		pc.modulate = Color(1, 1, 1, 0.5)
+	var h := HBoxContainer.new()
+	h.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	h.alignment = BoxContainer.ALIGNMENT_CENTER
+	h.add_theme_constant_override("separation", 8)
+	pc.add_child(h)
+	var l := Label.new()
+	l.text = nm
+	l.add_theme_color_override("font_color", COL_INK)
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	h.add_child(l)
+	if cost_text != "":
+		var c := Label.new()
+		c.text = cost_text
+		c.add_theme_color_override("font_color", COL_GOLD)
+		c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		h.add_child(c)
+	if enabled:
+		pc.gui_input.connect(func(e):
+			if e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_LEFT and e.pressed:
+				on_press.call())
+	return pc
 
 func flash_banner(text: String, color: Color) -> void:
 	banner.text = text
@@ -1882,6 +1918,8 @@ func _buy_relic(id: String) -> void:
 	_update_top()
 
 func _process(_delta: float) -> void:
+	if _buy_id != "":
+		_mouse = get_global_mouse_position()   # ghost follows the cursor as you drag
 	if phase == Phase.BATTLE:
 		_update_top()
 	if phase == Phase.DEPLOY or phase == Phase.BATTLE or _shop_viewing:
