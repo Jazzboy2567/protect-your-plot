@@ -8,6 +8,7 @@ const ENGAGE_RADIUS := 120.0          # how far a unit chases a foe that nears i
 const AGGRO_RADIUS := 95.0            # a foe this close to the unit itself is engaged, wherever it strays
 const NEIGHBOR_DIST := 62.0           # social aggro: a foe a comrade this close is fighting, I fight too
 const LEASH := 190.0                  # how far a unit will chase from its post before regrouping
+var _waypoint := Vector2.INF          # committed corner while routing around a wall
 
 var main = null                       # reference to Main (owns the unit arrays)
 var team: int = 0                     # 0 = peasant, 1 = enemy
@@ -310,10 +311,9 @@ func _movement_goal(has_t: bool, dist: float, reach: float):
 		return command_point
 	return null
 
-# Advance toward a goal but never walk through a wall. If the direct step is
-# blocked, head for the wall corner that best rounds toward the goal (a little
-# visibility-graph hop), so the unit actually paths around instead of jamming
-# against the face or a corner.
+# Advance toward a goal but never walk through a wall. When the way ahead is
+# blocked, commit to a wall corner (a waypoint) and head to it before
+# re-evaluating — a lookahead + commitment stops the unit oscillating at a corner.
 func _step_toward(goal: Vector2, maxd: float) -> void:
 	var to_goal: Vector2 = goal - global_position
 	var dl := to_goal.length()
@@ -321,41 +321,56 @@ func _step_toward(goal: Vector2, maxd: float) -> void:
 		return
 	var dir: Vector2 = to_goal / dl
 	var d: float = minf(maxd, dl)
-	if main == null or not main.wall_blocks(global_position + dir * d, radius, self):
+	# Real clearance toward the goal (not just a 1px step)? Take it, drop waypoint.
+	var look: float = maxf(d, radius + 6.0)
+	if main == null or not main.wall_blocks(global_position + dir * look, radius, self):
+		_waypoint = Vector2.INF
 		global_position += dir * d
 		return
-	var b = main.blocking_wall(global_position + dir * d, radius, self)
+	# Keep heading to a committed corner if it's still reachable and unreached.
+	if _waypoint != Vector2.INF:
+		var wv: Vector2 = _waypoint - global_position
+		var wl := wv.length()
+		if wl <= radius + 3.0:
+			_waypoint = Vector2.INF
+		elif not main.wall_blocks(global_position + wv / wl * minf(d, wl), radius, self):
+			global_position += wv / wl * minf(d, wl)
+			return
+		else:
+			_waypoint = Vector2.INF
+	var b = main.blocking_wall(global_position + dir * look, radius, self)
+	if b == null:
+		b = main.blocking_wall(global_position + dir * d, radius, self)
 	if b == null:
 		return
 	var w: float = b.foot_w if b.foot_w > 0.0 else b.radius * 2.0
 	var h: float = b.foot_h if b.foot_h > 0.0 else b.radius * 2.0
 	var ex: float = w * 0.5 + radius + 3.0
 	var ey: float = h * 0.5 + radius + 3.0
-	# Head for the free corner we can actually step toward that minimises
-	# (walk to it + corner to goal) — i.e. round the near side of the wall.
-	var best_step := Vector2.ZERO
+	# Commit to the reachable corner closest to the goal.
+	var best := Vector2.INF
 	var best_cost := INF
 	for sx in [-1.0, 1.0]:
 		for sy in [-1.0, 1.0]:
 			var c: Vector2 = b.global_position + Vector2(sx * ex, sy * ey)
 			if main.wall_blocks(c, radius, self):
 				continue
-			var cdir: Vector2 = c - global_position
-			var cl := cdir.length()
+			var cv: Vector2 = c - global_position
+			var cl := cv.length()
 			if cl < 0.001:
 				continue
-			var step: Vector2 = cdir / cl * minf(d, cl)
-			if main.wall_blocks(global_position + step, radius, self):
-				continue   # can't head that way without clipping the wall
-			var cost: float = cl + c.distance_to(goal)
+			if main.wall_blocks(global_position + cv / cl * minf(d, cl), radius, self):
+				continue
+			var cost: float = c.distance_to(goal)
 			if cost < best_cost:
 				best_cost = cost
-				best_step = step
-	if best_step != Vector2.ZERO:
-		global_position += best_step
+				best = c
+	if best != Vector2.INF:
+		_waypoint = best
+		var bv: Vector2 = best - global_position
+		global_position += bv.normalized() * minf(d, bv.length())
 		return
-	# Fallback: no corner worked (boxed in) — take any free direction that gets us
-	# closer to the goal, so the unit keeps trying instead of freezing.
+	# Fallback: boxed in — any free direction that gets us closer to the goal.
 	var fb_step := Vector2.ZERO
 	var fb_best := global_position.distance_to(goal)
 	for ang in [45.0, -45.0, 90.0, -90.0, 135.0, -135.0, 180.0]:
