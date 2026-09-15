@@ -1021,6 +1021,62 @@ func blocking_wall(pos: Vector2, r: float, ignore = null):
 func wall_blocks(pos: Vector2, r: float, ignore = null) -> bool:
 	return blocking_wall(pos, r, ignore) != null
 
+# --- Grid pathfinding: BFS around the whole wall shape (handles wall lines) ---
+func _blocked_tile(tx: int, ty: int) -> bool:
+	for b in buildings:
+		var sp := _bspan(b)
+		if tx >= b["gx"] and tx < b["gx"] + sp.x and ty >= b["gy"] and ty < b["gy"] + sp.y:
+			return true
+	return false
+
+# The centre of the next tile on the shortest walk from `from_pos` to `to_pos`
+# that avoids wall tiles. Returns `to_pos` if already adjacent or no path exists.
+func nav_next(from_pos: Vector2, to_pos: Vector2):
+	var cols := int(ceil(ARENA.x / TILE))
+	var start := Vector2i(clampi(int(from_pos.x / TILE), 0, cols - 1), clampi(int(from_pos.y / TILE), 0, GRID_ROWS - 1))
+	var goal := Vector2i(clampi(int(to_pos.x / TILE), 0, cols - 1), clampi(int(to_pos.y / TILE), 0, GRID_ROWS - 1))
+	if start == goal:
+		return to_pos
+	# If the goal tile is a wall (enemy hugging it), aim for its nearest free tile.
+	if _blocked_tile(goal.x, goal.y):
+		var alt = null
+		var altd := INF
+		for dvec in [Vector2i(1,0), Vector2i(-1,0), Vector2i(0,1), Vector2i(0,-1)]:
+			var n: Vector2i = goal + dvec
+			if n.x >= 0 and n.x < cols and n.y >= 0 and n.y < GRID_ROWS and not _blocked_tile(n.x, n.y):
+				var dd := from_pos.distance_squared_to(_center_of(n))
+				if dd < altd:
+					altd = dd
+					alt = n
+		if alt == null:
+			return to_pos
+		goal = alt
+	var dirs := [Vector2i(1,0), Vector2i(-1,0), Vector2i(0,1), Vector2i(0,-1), Vector2i(1,1), Vector2i(1,-1), Vector2i(-1,1), Vector2i(-1,-1)]
+	var came := {start: start}
+	var q: Array = [start]
+	var head := 0
+	var found := false
+	while head < q.size():
+		var cur: Vector2i = q[head]
+		head += 1
+		if cur == goal:
+			found = true
+			break
+		for dvec in dirs:
+			var nx: Vector2i = cur + dvec
+			if nx.x < 0 or nx.x >= cols or nx.y < 0 or nx.y >= GRID_ROWS or came.has(nx) or _blocked_tile(nx.x, nx.y):
+				continue
+			if dvec.x != 0 and dvec.y != 0 and (_blocked_tile(cur.x + dvec.x, cur.y) or _blocked_tile(cur.x, cur.y + dvec.y)):
+				continue   # don't cut diagonally through a wall corner
+			came[nx] = cur
+			q.append(nx)
+	if not found:
+		return to_pos
+	var node: Vector2i = goal
+	while came[node] != start:
+		node = came[node]
+	return _center_of(node)
+
 func get_backline_peasant():
 	var best = null
 	var best_x := INF
