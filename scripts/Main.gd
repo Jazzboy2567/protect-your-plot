@@ -84,7 +84,9 @@ var _grab = null                    # unit or wall grabbed on mouse-down
 var _drag_units: Array = []         # the group of units being dragged together
 var _drag_origins: Dictionary = {}  # node -> original global_position (for reset)
 var _buy_id: String = ""            # wall id being placed via a ghost (drag-to-buy)
+var _buy_press_pos: Vector2 = Vector2.ZERO  # where the buy-drag started (chip press)
 var _mouse: Vector2 = Vector2.ZERO  # latest pointer position (for drag previews)
+var _projectiles: Array = []        # in-flight shots: {from, to, t, dur, col}
 
 func _ready() -> void:
 	world = Node2D.new()
@@ -619,6 +621,7 @@ func _span(id: String) -> Vector2i:
 func _spawn_buildings() -> void:
 	for b in buildings:
 		var u := _make_unit(b["id"], 0)
+		_apply_footprint(u, b)   # honour a saved rotation so the sprite isn't off-centre
 		u.position = _building_center(b)
 		u.command_point = u.position
 		u.set_meta("bref", b)
@@ -736,12 +739,21 @@ func _start_buy(id: String) -> void:
 		_update_top()
 		return
 	_buy_id = id
+	_buy_press_pos = get_global_mouse_position()
 	_clear_selection()
-	info_text = "Move to position, click to place. Right-click to cancel."
+	info_text = "Drag onto the field and release to place, or click a tile. Right-click cancels."
 	_update_top()
 	queue_redraw()
 
+# Releasing the wall chip: if you dragged away from it, place at the cursor;
+# a plain click leaves the ghost armed so you can click a tile instead.
+func _buy_chip_release() -> void:
+	if _buy_id != "" and get_global_mouse_position().distance_to(_buy_press_pos) > 8.0:
+		_place_buy(get_global_mouse_position())
+
 func _place_buy(pos: Vector2) -> void:
+	if _buy_id == "":
+		return
 	var sp := _span(_buy_id)
 	var gx := clampi(int(pos.x / TILE), 0, GRID_COLS - sp.x)
 	var gy := clampi(int(pos.y / TILE), 0, GRID_ROWS - sp.y)
@@ -914,6 +926,7 @@ func _despawn_all() -> void:
 		c.queue_free()
 	peasants.clear()
 	enemies.clear()
+	_projectiles.clear()
 
 # ---------------------------------------------------------------- combat queries
 
@@ -1639,7 +1652,7 @@ func _build_deploy_ui() -> void:
 			var cost: int = GameData.UNITS[id]["cost"]
 			# Press the chip to pick up a ghost; drag it onto the field and drop, or
 			# click the chip then click a tile. Gold is spent only on a valid placement.
-			var chip := _priced_chip(names[id], "%dg" % cost, func(): _start_buy(id), gold >= cost)
+			var chip := _priced_chip(names[id], "%dg" % cost, func(): _start_buy(id), gold >= cost, func(): _buy_chip_release())
 			chip.position = Vector2(bx, byy)
 			chip.size = Vector2(150, 36)
 			chip.custom_minimum_size = Vector2(150, 36)
@@ -1694,7 +1707,12 @@ func _hud_list(title: String, entries: Array, tip_cb: Callable, pos: Vector2, fr
 	rl.size = Vector2(214, h)
 	rl.position = Vector2(pos.x, (ARENA.y - 66.0 - h) if from_bottom else pos.y)
 	if tip_cb.is_valid():
-		rl.meta_hover_started.connect(func(m): _show_hover(tip_cb.call(str(m)), rl.global_position + Vector2(rl.size.x + 8.0, 0.0)))
+		var on_right := pos.x > ARENA.x * 0.5
+		rl.meta_hover_started.connect(func(m):
+			if on_right:
+				_show_hover(tip_cb.call(str(m)), rl.global_position + Vector2(-8.0, 8.0), true)
+			else:
+				_show_hover(tip_cb.call(str(m)), rl.global_position + Vector2(rl.size.x + 8.0, 0.0)))
 		rl.meta_hover_ended.connect(func(_m): _hide_hover())
 	panel.add_child(rl)
 	return h
@@ -1741,9 +1759,10 @@ func _mk_button(text: String, pos: Vector2, size: Vector2, cb: Callable) -> Butt
 	panel.add_child(b)
 	return b
 
-# A clickable chip: name in cream, price in gold. `on_press` fires on left-press
-# (so a wall chip can start a ghost you then drag onto the field and drop).
-func _priced_chip(nm: String, cost_text: String, on_press: Callable, enabled: bool) -> PanelContainer:
+# A clickable chip: name in cream, price in gold. `on_press` fires on left-press,
+# `on_release` (if given) on left-release — so a wall chip starts a ghost on press
+# and places it on release wherever you dragged to.
+func _priced_chip(nm: String, cost_text: String, on_press: Callable, enabled: bool, on_release: Callable = Callable()) -> PanelContainer:
 	var pc := PanelContainer.new()
 	pc.add_theme_stylebox_override("panel", _card_style())
 	pc.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -1767,8 +1786,11 @@ func _priced_chip(nm: String, cost_text: String, on_press: Callable, enabled: bo
 		h.add_child(c)
 	if enabled:
 		pc.gui_input.connect(func(e):
-			if e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_LEFT and e.pressed:
-				on_press.call())
+			if e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_LEFT:
+				if e.pressed:
+					on_press.call()
+				elif on_release.is_valid():
+					on_release.call())
 	return pc
 
 func flash_banner(text: String, color: Color) -> void:
@@ -1917,28 +1939,39 @@ func _buy_relic(id: String) -> void:
 	_build_shop_ui()
 	_update_top()
 
+func spawn_projectile(from: Vector2, to: Vector2, col: Color) -> void:
+	_projectiles.append({"from": from, "to": to, "t": 0.0, "dur": 0.13, "col": col})
+
 func _process(_delta: float) -> void:
 	if _buy_id != "":
 		_mouse = get_global_mouse_position()   # ghost follows the cursor as you drag
+	if not _projectiles.is_empty():
+		for p in _projectiles:
+			p["t"] += _delta
+		_projectiles = _projectiles.filter(func(p): return p["t"] < p["dur"])
+		queue_redraw()
 	if phase == Phase.BATTLE:
 		_update_top()
 	if phase == Phase.DEPLOY or phase == Phase.BATTLE or _shop_viewing:
 		_update_hover()
 		queue_redraw()   # keep the grid + building labels live
 
-func _show_hover(text: String, at: Vector2 = Vector2(-9999, -9999)) -> void:
+func _show_hover(text: String, at: Vector2 = Vector2(-9999, -9999), left_of: bool = false) -> void:
 	_ui_hover_active = true   # keep the per-frame unit-hover from stealing this
 	hover_label.text = text
 	var anchor: Vector2 = (get_global_mouse_position() + Vector2(14, 12)) if at.x < -9000.0 else at
-	_position_hover(anchor)
+	_position_hover(anchor, left_of)
 
 # Size the tooltip to its text and keep it fully on-screen — flipping it above
-# the anchor when it would otherwise run off the bottom.
-func _position_hover(anchor: Vector2) -> void:
+# the anchor near the bottom, and placing it to the LEFT of the anchor when asked
+# (so right-edge panels don't get covered by their own tooltip).
+func _position_hover(anchor: Vector2, left_of: bool = false) -> void:
 	hover_label.reset_size()   # shrink the box to fit the text (no dead space)
 	var sz: Vector2 = hover_label.size
 	var p: Vector2 = anchor
-	if p.x + sz.x > ARENA.x - 4.0:
+	if left_of:
+		p.x = anchor.x - sz.x        # tooltip sits to the left of the anchor
+	elif p.x + sz.x > ARENA.x - 4.0:
 		p.x = anchor.x - sz.x - 24.0   # flip to the left of the pointer
 	if p.y + sz.y > ARENA.y - 4.0:
 		p.y = anchor.y - sz.y - 24.0   # flip above the pointer
@@ -2000,6 +2033,14 @@ func _draw() -> void:
 					draw_string(font, Vector2(p.global_position.x - 80.0, p.global_position.y - half_h - 6.0), ch, HORIZONTAL_ALIGNMENT_CENTER, 160.0, 13, col)
 				elif p.type_id == "castle":
 					draw_string(font, Vector2(p.global_position.x - 80.0, p.global_position.y + half_h + 18.0), "Castle Keep", HORIZONTAL_ALIGNMENT_CENTER, 160.0, 13, col)
+
+	# In-flight projectiles for ranged attacks (a dart with a short trail).
+	for pr in _projectiles:
+		var f: float = clampf(pr["t"] / pr["dur"], 0.0, 1.0)
+		var tip: Vector2 = pr["from"].lerp(pr["to"], f)
+		var tail: Vector2 = pr["from"].lerp(pr["to"], maxf(0.0, f - 0.25))
+		draw_line(tail, tip, pr["col"], 2.0)
+		draw_circle(tip, 3.0, pr["col"])
 
 	# --- Drag previews (green = valid, yellow = swaps a spot, red = blocked) ---
 	var mgx := int((FENCE_X - 1.0) / TILE)

@@ -235,6 +235,9 @@ func _physics_process(delta: float) -> void:
 				dmg *= crit_mult
 			if team == 1:
 				target.note_attacker(self)
+			# Ranged attackers loose a visible shot instead of hitting invisibly.
+			if attack_range >= 20.0 and main:
+				main.spawn_projectile(global_position, target.global_position, body_color.lerp(Color.WHITE, 0.3))
 			target.take_damage(dmg, pierce, is_crit)
 			if applies_burn:
 				target.ignite(3.0, 3.0)
@@ -270,14 +273,16 @@ func _eject_from_walls() -> void:
 		var to_top: float = global_position.y - rect.position.y
 		var to_bot: float = rect.end.y - global_position.y
 		var m: float = min(min(to_left, to_right), min(to_top, to_bot))
+		# Nudge just PAST the edge — landing exactly on it still counts as inside
+		# (has_point is inclusive), which would pin the unit and stop it sliding.
 		if m == to_left:
-			global_position.x = rect.position.x
+			global_position.x = rect.position.x - 0.5
 		elif m == to_right:
-			global_position.x = rect.end.x
+			global_position.x = rect.end.x + 0.5
 		elif m == to_top:
-			global_position.y = rect.position.y
+			global_position.y = rect.position.y - 0.5
 		else:
-			global_position.y = rect.end.y
+			global_position.y = rect.end.y + 0.5
 		guard += 1
 		b = main.blocking_wall(global_position, radius, self)
 
@@ -297,9 +302,9 @@ func _movement_goal(has_t: bool, dist: float, reach: float):
 	return null
 
 # Advance toward a goal but never walk through a wall. If the direct step is
-# blocked, deflect the heading by growing angles (favouring the side the goal is
-# on) and take the first clear one — so the unit steers around a wall while still
-# making forward progress instead of just sliding up and down against it.
+# blocked, head for the wall corner that best rounds toward the goal (a little
+# visibility-graph hop), so the unit actually paths around instead of jamming
+# against the face or a corner.
 func _step_toward(goal: Vector2, maxd: float) -> void:
 	var to_goal: Vector2 = goal - global_position
 	var dl := to_goal.length()
@@ -311,17 +316,34 @@ func _step_toward(goal: Vector2, maxd: float) -> void:
 		global_position += dir * d
 		return
 	var b = main.blocking_wall(global_position + dir * d, radius, self)
-	var pref := -1.0
-	if b != null:
-		pref = -1.0 if goal.y < b.global_position.y else 1.0
-	else:
-		pref = -1.0 if goal.y < global_position.y else 1.0
-	for mag in [35.0, 60.0, 90.0, 120.0]:
-		for sgn in [pref, -pref]:
-			var dd: Vector2 = dir.rotated(deg_to_rad(mag * sgn))
-			if not main.wall_blocks(global_position + dd * d, radius, self):
-				global_position += dd * d
-				return
+	if b == null:
+		return
+	var w: float = b.foot_w if b.foot_w > 0.0 else b.radius * 2.0
+	var h: float = b.foot_h if b.foot_h > 0.0 else b.radius * 2.0
+	var ex: float = w * 0.5 + radius + 3.0
+	var ey: float = h * 0.5 + radius + 3.0
+	# Head for the free corner we can actually step toward that minimises
+	# (walk to it + corner to goal) — i.e. round the near side of the wall.
+	var best_step := Vector2.ZERO
+	var best_cost := INF
+	for sx in [-1.0, 1.0]:
+		for sy in [-1.0, 1.0]:
+			var c: Vector2 = b.global_position + Vector2(sx * ex, sy * ey)
+			if main.wall_blocks(c, radius, self):
+				continue
+			var cdir: Vector2 = c - global_position
+			var cl := cdir.length()
+			if cl < 0.001:
+				continue
+			var step: Vector2 = cdir / cl * minf(d, cl)
+			if main.wall_blocks(global_position + step, radius, self):
+				continue   # can't head that way without clipping the wall
+			var cost: float = cl + c.distance_to(goal)
+			if cost < best_cost:
+				best_cost = cost
+				best_step = step
+	if best_step != Vector2.ZERO:
+		global_position += best_step
 
 func take_damage(amount: float, pierce_flag: bool = false, is_crit: bool = false) -> void:
 	if _dead or invulnerable:
