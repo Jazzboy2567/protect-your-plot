@@ -843,17 +843,24 @@ func _drop_units(pos: Vector2) -> void:
 	var max_gx := int((FENCE_X - 1.0) / TILE)
 	var delta := Vector2i(clampi(int(pos.x / TILE), 0, max_gx), clampi(int(pos.y / TILE), 0, GRID_ROWS - 1)) - _tile_of(_drag_origins[_grab])
 	var excl := {}
+	var units: Array = []
+	var walls: Array = []
 	for u in _drag_units:
 		excl[u] = true
-	if _drag_units.size() == 1:
-		var u0 = _drag_units[0]
+		if u.is_structure:
+			walls.append(u)
+		else:
+			units.append(u)
+	# Single unit onto an occupied tile swaps places.
+	if units.size() == 1 and walls.is_empty():
+		var u0 = units[0]
 		var nt := _tile_of(_drag_origins[u0]) + delta
 		nt = Vector2i(clampi(nt.x, 0, max_gx), clampi(nt.y, 0, GRID_ROWS - 1))
 		if _tile_occupied(nt.x, nt.y):
 			_reset_drag()
 			return
 		var occ = _unit_at_tile(nt, excl)
-		if occ != null:   # swap places
+		if occ != null:
 			var ocp := _center_of(_tile_of(_drag_origins[u0]))
 			occ.global_position = ocp
 			occ.command_point = ocp
@@ -862,18 +869,34 @@ func _drop_units(pos: Vector2) -> void:
 		u0.command_point = cp
 		_clear_selection()
 		return
-	var targets := {}
-	for u in _drag_units:
+	# Move walls first (so units don't get placed onto their new footprints).
+	for wall in walls:
+		_move_wall_by_delta(wall, delta)
+	# Move units, preserving formation but nudging any that land on something.
+	var claimed := {}
+	for u in units:
 		var nt := _tile_of(_drag_origins[u]) + delta
-		if nt.x < 0 or nt.x > max_gx or nt.y < 0 or nt.y >= GRID_ROWS or _tile_occupied(nt.x, nt.y) or _unit_at_tile(nt, excl) != null:
-			_reset_drag()
-			return
-		targets[u] = nt
-	for u in _drag_units:
-		var cp := _center_of(targets[u])
+		nt = Vector2i(clampi(nt.x, 0, max_gx), clampi(nt.y, 0, GRID_ROWS - 1))
+		nt = _nearest_free_tile(nt, max_gx, excl, claimed)
+		claimed[nt] = true
+		var cp := _center_of(nt)
 		u.global_position = cp
 		u.command_point = cp
 	_clear_selection()
+
+func _move_wall_by_delta(wall, delta: Vector2i) -> void:
+	if not wall.has_meta("bref"):
+		return
+	var b = wall.get_meta("bref")
+	var sp := _bspan(b)
+	var gx := clampi(int(b["gx"]) + delta.x, 0, GRID_COLS - sp.x)
+	var gy := clampi(int(b["gy"]) + delta.y, 0, GRID_ROWS - sp.y)
+	if _footprint_free(gx, gy, sp, b):
+		b["gx"] = gx
+		b["gy"] = gy
+		wall.relocate(_building_center(b))
+	elif _drag_origins.has(wall):
+		wall.relocate(_drag_origins[wall])   # blocked: leave it where it was
 
 func _reset_drag() -> void:
 	for n in _drag_origins:
@@ -888,6 +911,9 @@ func _reset_drag() -> void:
 func _clear_grab_state() -> void:
 	if is_instance_valid(_grab) and _grab.is_structure:
 		_grab.being_dragged = false
+	for u in _drag_units:
+		if is_instance_valid(u) and u.is_structure:
+			u.being_dragged = false
 	_grab = null
 	_dragging = false
 	_drag_units.clear()
@@ -959,15 +985,17 @@ func get_nearest_structure(u: Unit):
 	return best
 
 func get_heal_target(u: Unit):
-	# Most-hurt living non-structure ally within the healer's range.
+	# Most-hurt living non-structure ally within a seek range — wider than the
+	# heal range, so the herbalist MOVES toward a hurt ally and heals once close.
 	var best = null
 	var best_frac := 1.0
+	var seek: float = u.heal_range + 130.0
 	for a in peasants:
 		if a == u or not is_instance_valid(a) or a.is_structure or a.hp <= 0.0:
 			continue
 		if a.hp >= a.max_hp:
 			continue
-		if u.global_position.distance_to(a.global_position) > u.heal_range + a.radius + u.radius:
+		if u.global_position.distance_to(a.global_position) > seek + a.radius + u.radius:
 			continue
 		var frac: float = a.hp / a.max_hp
 		if frac < best_frac:
@@ -1042,22 +1070,21 @@ func _unhandled_input(event: InputEvent) -> void:
 				return   # a ghost is being placed; the release drops it
 			# Grab a unit (with its selected group) to drag; else grab a wall.
 			var u = _peasant_at(event.position)
+			var w2 = _wall_at(event.position)
 			if u != null:
 				_grab = u
 				if not u.selected:
 					_clear_selection()
 					u.selected = true
 					u.queue_redraw()
-				for p in peasants:
-					if is_instance_valid(p) and p.selected and not p.is_structure:
-						_drag_units.append(p)
-						_drag_origins[p] = p.global_position
-			else:
-				var w = _wall_at(event.position)
-				if w != null:
-					_grab = w
-					w.being_dragged = true
-					_drag_origins[w] = w.global_position
+				_build_drag_group()
+			elif w2 != null and w2.selected:
+				_grab = w2
+				_build_drag_group()
+			elif w2 != null:
+				_grab = w2
+				w2.being_dragged = true
+				_drag_origins[w2] = w2.global_position
 		else:
 			if _buy_id != "":
 				_place_buy(event.position)
@@ -1175,15 +1202,44 @@ func _tiles_around(gx: int, gy: int, count: int, max_gx: int, avoid: Dictionary 
 		r += 1
 	return res
 
+func _selectable(p) -> bool:
+	# Units and walls can be box-selected; the keep and church cannot.
+	return not p.is_structure or (p.type_id != "castle" and p.type_id != "church")
+
 func _select_in_rect(r: Rect2) -> void:
 	# A tiny rect (a stray click read as a drag) selects nothing extra.
 	for p in peasants:
 		if not is_instance_valid(p):
 			continue
-		var s: bool = (not p.is_structure) and r.has_point(p.global_position)
+		var s: bool = _selectable(p) and r.has_point(p.global_position)
 		if p.selected != s:
 			p.selected = s
 			p.queue_redraw()
+
+# Fill the drag group from every selected, selectable thing (units and walls).
+func _build_drag_group() -> void:
+	for p in peasants:
+		if is_instance_valid(p) and p.selected and _selectable(p):
+			_drag_units.append(p)
+			_drag_origins[p] = p.global_position
+			if p.is_structure:
+				p.being_dragged = true
+
+# Spiral out from a tile to the nearest free one (in-bounds, no building, not
+# claimed this move, and not held by a non-selected unit).
+func _nearest_free_tile(start: Vector2i, max_gx: int, excl: Dictionary, claimed: Dictionary) -> Vector2i:
+	for r in range(0, 14):
+		for dy in range(-r, r + 1):
+			for dx in range(-r, r + 1):
+				if r > 0 and absi(dx) != r and absi(dy) != r:
+					continue
+				var t := Vector2i(start.x + dx, start.y + dy)
+				if t.x < 0 or t.x > max_gx or t.y < 0 or t.y >= GRID_ROWS:
+					continue
+				if _tile_occupied(t.x, t.y) or claimed.has(t) or _unit_at_tile(t, excl) != null:
+					continue
+				return t
+	return start
 
 func _clear_selection() -> void:
 	for p in peasants:
@@ -1342,7 +1398,7 @@ func _guild_card(id: String) -> Control:
 	pc.add_theme_stylebox_override("panel", _card_style())
 	pc.custom_minimum_size = Vector2(224, 0)
 	pc.mouse_filter = Control.MOUSE_FILTER_PASS
-	pc.mouse_entered.connect(func(): _show_hover(_unit_tooltip(id), pc.global_position + Vector2(0, -118)))
+	pc.mouse_entered.connect(func(): _show_hover(_unit_tooltip(id), get_global_mouse_position() + Vector2(0, 20)))
 	pc.mouse_exited.connect(_hide_hover)
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 6)
@@ -1373,7 +1429,7 @@ func _guild_card(id: String) -> Control:
 	btn.text = "Sign Contract"
 	btn.pressed.connect(func(): _sign_contract(id))
 	# Keep the unit's stats showing while the pointer is over the button too.
-	btn.mouse_entered.connect(func(): _show_hover(_unit_tooltip(id), pc.global_position + Vector2(0, -118)))
+	btn.mouse_entered.connect(func(): _show_hover(_unit_tooltip(id), get_global_mouse_position() + Vector2(0, 20)))
 	btn.mouse_exited.connect(_hide_hover)
 	_style_button(btn)
 	v.add_child(btn)
@@ -1855,7 +1911,7 @@ func _update_hover() -> void:
 	var txt := ""
 	if found.is_structure:
 		# Walls/keep: just the name and how much punishment it can take.
-		txt = "%s\nHealth: %d / %d" % [found.display_name, int(ceil(found.hp)), int(found.max_hp)]
+		txt = "%s\nHealth: %d / %d" % [found.display_name, mini(roundi(found.hp), roundi(found.max_hp)), roundi(found.max_hp)]
 		if found.armor > 0.0:
 			txt += "\nArmor: %d" % int(found.armor)
 		if found.type_id != "castle" and found.type_id != "church" and phase == Phase.DEPLOY:
@@ -1863,7 +1919,7 @@ func _update_hover() -> void:
 	else:
 		var rng: float = found.attack_range
 		var side := "Your unit" if found.team == 0 else "Enemy"
-		txt = "%s (%s)\nHP: %d / %d" % [found.display_name, side, int(ceil(found.hp)), int(found.max_hp)]
+		txt = "%s (%s)\nHP: %d / %d" % [found.display_name, side, mini(roundi(found.hp), roundi(found.max_hp)), roundi(found.max_hp)]
 		if found.damage > 0.0:
 			txt += "\nDamage: %d\nAtk speed: %.1f / s" % [int(found.damage), 1.0 / maxf(found.attack_cooldown, 0.01)]
 		txt += "\nRange: %s" % ("melee" if rng <= 12.0 else str(int(rng)))
