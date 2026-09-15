@@ -113,6 +113,7 @@ func relocate(pos: Vector2) -> void:
 	global_position = pos
 	command_point = pos
 	_home = pos
+	queue_redraw()   # footprint may have changed size/orientation — repaint it
 
 # Remember who just struck me so nearby allies can rally to my defence.
 func note_attacker(who) -> void:
@@ -295,32 +296,32 @@ func _movement_goal(has_t: bool, dist: float, reach: float):
 		return command_point
 	return null
 
-# Advance toward a goal but never walk through a wall: if the direct step is
-# blocked, slide along the wall toward the end nearest the goal to round it.
+# Advance toward a goal but never walk through a wall. If the direct step is
+# blocked, deflect the heading by growing angles (favouring the side the goal is
+# on) and take the first clear one — so the unit steers around a wall while still
+# making forward progress instead of just sliding up and down against it.
 func _step_toward(goal: Vector2, maxd: float) -> void:
 	var to_goal: Vector2 = goal - global_position
 	var dl := to_goal.length()
 	if dl < 0.001:
 		return
-	var step: Vector2 = to_goal / dl * minf(maxd, dl)
-	var nxt: Vector2 = global_position + step
-	if main == null or not main.wall_blocks(nxt, radius, self):
-		global_position = nxt
+	var dir: Vector2 = to_goal / dl
+	var d: float = minf(maxd, dl)
+	if main == null or not main.wall_blocks(global_position + dir * d, radius, self):
+		global_position += dir * d
 		return
-	var b = main.blocking_wall(nxt, radius, self)
-	var vy := 1.0
+	var b = main.blocking_wall(global_position + dir * d, radius, self)
+	var pref := -1.0
 	if b != null:
-		var half_h: float = (b.foot_h if b.foot_h > 0.0 else b.radius * 2.0) * 0.5
-		var top: float = b.global_position.y - half_h
-		var bot: float = b.global_position.y + half_h
-		vy = -1.0 if absf(goal.y - top) <= absf(goal.y - bot) else 1.0
+		pref = -1.0 if goal.y < b.global_position.y else 1.0
 	else:
-		vy = -1.0 if goal.y < global_position.y else 1.0
-	var slide: Vector2 = Vector2(0, vy) * maxd
-	if not main.wall_blocks(global_position + slide, radius, self):
-		global_position += slide
-	elif not main.wall_blocks(global_position - slide, radius, self):
-		global_position -= slide
+		pref = -1.0 if goal.y < global_position.y else 1.0
+	for mag in [35.0, 60.0, 90.0, 120.0]:
+		for sgn in [pref, -pref]:
+			var dd: Vector2 = dir.rotated(deg_to_rad(mag * sgn))
+			if not main.wall_blocks(global_position + dd * d, radius, self):
+				global_position += dd * d
+				return
 
 func take_damage(amount: float, pierce_flag: bool = false, is_crit: bool = false) -> void:
 	if _dead or invulnerable:
