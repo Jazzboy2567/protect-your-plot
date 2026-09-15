@@ -161,9 +161,18 @@ func _physics_process(delta: float) -> void:
 		if target == null:
 			target = main.get_nearest_enemy(self)
 
-	# A wall directly ahead must be broken through first (structure-hunters skip this).
-	if team == 1 and targets != "structures":
+	# Enemies break THROUGH a wall that blocks their path rather than sneaking
+	# around it — so they attack whatever wall is directly ahead or between them
+	# and their target, instead of getting pinned against it.
+	if team == 1 and targets != "structures" and is_instance_valid(target):
 		var wall = main.structure_ahead(self)
+		if wall == null and not target.is_structure:
+			var tv: Vector2 = target.global_position - global_position
+			var td := tv.length()
+			if td > 0.1:
+				var w2 = main.blocking_wall(global_position + tv / td * (radius + 16.0), radius, self)
+				if w2 != null and not w2.invulnerable:
+					wall = w2
 		if wall != null:
 			target = wall
 
@@ -177,7 +186,9 @@ func _physics_process(delta: float) -> void:
 			continue
 		var d: Vector2 = global_position - a.global_position
 		var dl := d.length()
-		var mind: float = radius + a.radius + 2.0
+		# Soft separation: only nudge apart when heavily overlapping, so units can
+		# pass by/through each other (and funnel around walls) but never fully stack.
+		var mind: float = (radius + a.radius) * 0.5
 		if dl > 0.001 and dl < mind and not a.is_structure:
 			sep += d / dl * (mind - dl)
 		if a.aura != "" and dl <= a.aura_range:
