@@ -7,7 +7,7 @@ extends Node2D
 const ENGAGE_RADIUS := 120.0          # how far a unit chases a foe that nears its post
 const AGGRO_RADIUS := 95.0            # a foe this close to the unit itself is engaged, wherever it strays
 const NEIGHBOR_DIST := 62.0           # social aggro: a foe a comrade this close is fighting, I fight too
-const LEASH := 190.0                  # how far a unit will chase from its post before regrouping
+const LEASH := 260.0                  # how far a unit advances from its post before holding
 
 var main = null                       # reference to Main (owns the unit arrays)
 var team: int = 0                     # 0 = peasant, 1 = enemy
@@ -309,13 +309,14 @@ func _movement_goal(has_t: bool, dist: float, reach: float):
 	if has_t and dist <= reach:
 		return null
 	# Committed to a foe (directly, socially, or via a struck wall) — or a
-	# healer moving to a hurt ally: close the distance. But don't chase far past
-	# your post (a leash) so the line stays together and units don't wander off.
+	# healer moving to a hurt ally: close the distance. But cap how far a unit
+	# advances from its post (a leash): past that it HOLDS where it is (fights in
+	# place) rather than retreating, so the group never yo-yos at the boundary.
 	if has_t and heals and target.team == team:
 		return target.global_position
 	if has_t and engaging:
 		if global_position.distance_to(command_point) > LEASH:
-			return command_point   # strayed too far — regroup
+			return null   # at the leash — stand and fight, don't chase further
 		return target.global_position
 	if global_position.distance_to(command_point) > 8.0:
 		return command_point
