@@ -1217,23 +1217,32 @@ func _command_selected_to(pos: Vector2) -> void:
 			sel.append(p)
 	if sel.is_empty():
 		return
-	# Snap the target to a grid tile and give each selected unit its own tile,
-	# steering clear of tiles other (non-selected) units already stand on.
-	var max_gx := int((FENCE_X - 1.0) / TILE) if phase == Phase.DEPLOY else GRID_COLS + 14
-	var gx := clampi(int(pos.x / TILE), 0, max_gx)
-	var gy := clampi(int(pos.y / TILE), 0, GRID_ROWS - 1)
-	var avoid := {}
-	for p in peasants:
-		if is_instance_valid(p) and not p.is_structure and not p.selected:
-			avoid[Vector2i(int(p.global_position.x / TILE), int(p.global_position.y / TILE))] = true
-	var tiles := _tiles_around(gx, gy, sel.size(), max_gx, avoid)
-	for i in mini(sel.size(), tiles.size()):
-		var t: Vector2i = tiles[i]
-		var cp := Vector2((t.x + 0.5) * TILE, (t.y + 0.5) * TILE)
-		sel[i].command_point = cp
-		if phase == Phase.DEPLOY:
-			sel[i].global_position = cp
-		sel[i].queue_redraw()
+	# Move the whole selection while KEEPING its formation: shift every unit by
+	# the same tile delta (from the group's centre to the clicked tile), nudging
+	# any that would land on something.
+	var max_gx := int((FENCE_X - 1.0) / TILE)
+	var sx := 0
+	var sy := 0
+	for p in sel:
+		var t := _tile_of(p.global_position)
+		sx += t.x
+		sy += t.y
+	var anchor := Vector2i(roundi(float(sx) / sel.size()), roundi(float(sy) / sel.size()))
+	var drop := Vector2i(clampi(int(pos.x / TILE), 0, max_gx), clampi(int(pos.y / TILE), 0, GRID_ROWS - 1))
+	var delta := drop - anchor
+	var excl := {}
+	for p in sel:
+		excl[p] = true
+	var claimed := {}
+	for p in sel:
+		var nt := _tile_of(p.global_position) + delta
+		nt = Vector2i(clampi(nt.x, 0, max_gx), clampi(nt.y, 0, GRID_ROWS - 1))
+		nt = _nearest_free_tile(nt, max_gx, excl, claimed)
+		claimed[nt] = true
+		var cp := _center_of(nt)
+		p.global_position = cp
+		p.command_point = cp
+		p.queue_redraw()
 	_clear_selection()   # a move order deselects the group
 
 func _tiles_around(gx: int, gy: int, count: int, max_gx: int, avoid: Dictionary = {}) -> Array:
